@@ -63,10 +63,14 @@ public class BoatAI : MonoBehaviour
         if (other.CompareTag("Trash"))
         {
             var eval = FindObjectOfType<EvaluationManager>();
-            if (eval != null) eval.TrashCollected();
+            if (eval != null)
+            {
+                eval.TrashCollected(other.gameObject);
+            }
 
             Destroy(other.gameObject);
             target = null;
         }
     }
+
 }

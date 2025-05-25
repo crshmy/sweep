@@ -37,12 +37,21 @@ public class EvaluationManager : MonoBehaviour
         collected++;
     }
 
+    public void TrashCollected(GameObject trash)
+    {
+        if (allTrash.Contains(trash))
+        {
+            allTrash.Remove(trash); // 이미 수거한 거면 다시 세지 않게
+            collected++;
+        }
+    }
+
     public void SaveResults()
     {
         if (hasSaved) return;
         hasSaved = true;
 
-        int total = allTrash.Count;
+        int total = collected + allTrash.Count;
         float collectionRate = total > 0 ? (float)collected / total : 0f;
 
         string path = Application.dataPath + $"/result_{algorithmName}.csv";
@@ -55,4 +64,5 @@ public class EvaluationManager : MonoBehaviour
         File.WriteAllText(path, result);
         Debug.Log(" 결과 저장됨: " + path);
     }
+
 }
