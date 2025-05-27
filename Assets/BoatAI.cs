@@ -1,259 +1,224 @@
-using System;
-using System.Collections.Generic;
 using UnityEngine;
+using System.Collections.Generic;
+using System.Linq;
 
-public class SweepAlgorithm : MonoBehaviour
+[RequireComponent(typeof(Rigidbody))]
+public class BoatAI : MonoBehaviour
 {
-    public int gridSize = 50;
-    public Vector2Int startPos;
+    public float speed = 5f;
+    private Rigidbody rb;
+    private EvaluationManager eval;
 
-    public List<Vector2Int> trashPositions;
-    public List<Vector2Int> obstaclePositions;
+    private List<Vector3> path = new List<Vector3>();
+    private int currentPathIndex = 0;
+    private float reachThreshold = 0.5f;
 
-    private HashSet<Vector2Int> collected = new HashSet<Vector2Int>();
+    private List<GameObject> trashObjects;
+    private List<Vector3> trashPositions;
+    private List<Vector3> obstaclePositions;
 
-    // 유클리디안 거리 계산
-    private float Distance(Vector2Int a, Vector2Int b)
+    void Start()
     {
-        return Vector2Int.Distance(a, b);
+        rb = GetComponent<Rigidbody>();
+        eval = FindObjectOfType<EvaluationManager>();
+
+        RecalculateFusionPath(); // 최초 경로 계산
     }
 
-    // 장애물 체크
-    private bool IsCollision(Vector2Int pos)
+    void FixedUpdate()
     {
-        return obstaclePositions.Contains(pos);
-    }
-
-    // 인접 4방향 좌표 반환
-    private List<Vector2Int> Neighbors(Vector2Int pos)
-    {
-        List<Vector2Int> result = new List<Vector2Int>();
-
-        Vector2Int[] directions = new Vector2Int[]
+        if (path.Count == 0 || currentPathIndex >= path.Count)
         {
-            new Vector2Int(-1, 0),
-            new Vector2Int(1, 0),
-            new Vector2Int(0, -1),
-            new Vector2Int(0, 1)
-        };
-
-        foreach (var dir in directions)
-        {
-            Vector2Int neighbor = pos + dir;
-            if (neighbor.x >= 0 && neighbor.x < gridSize && neighbor.y >= 0 && neighbor.y < gridSize)
-            {
-                result.Add(neighbor);
-            }
+            RecalculateFusionPath();
+            return;
         }
-        return result;
+
+        Vector3 targetPos = path[currentPathIndex];
+        Vector3 dir = (targetPos - transform.position).normalized;
+        rb.MovePosition(rb.position + dir * speed * Time.fixedDeltaTime);
+        Quaternion rot = Quaternion.LookRotation(dir);
+        rb.MoveRotation(Quaternion.Slerp(rb.rotation, rot, 5f * Time.fixedDeltaTime));
+
+        if (Vector3.Distance(transform.position, targetPos) < reachThreshold)
+        {
+            currentPathIndex++;
+        }
     }
 
-    // A* 알고리즘 구현
-    private List<Vector2Int> AStarSearch(Vector2Int start, Vector2Int goal)
+    void OnTriggerEnter(Collider other)
     {
-        var openSet = new SortedSet<(float fScore, int count, Vector2Int pos)>(Comparer<(float, int, Vector2Int)>.Create((a, b) =>
+        if (other.CompareTag("Trash"))
         {
-            int cmp = a.fScore.CompareTo(b.fScore);
-            if (cmp == 0) cmp = a.count.CompareTo(b.count);
-            if (cmp == 0) cmp = a.pos.x.CompareTo(b.pos.x);
-            if (cmp == 0) cmp = a.pos.y.CompareTo(b.pos.y);
-            return cmp;
-        }));
-
-        int counter = 0;
-        openSet.Add((Distance(start, goal), counter++, start));
-
-        Dictionary<Vector2Int, Vector2Int> cameFrom = new Dictionary<Vector2Int, Vector2Int>();
-        Dictionary<Vector2Int, float> gScore = new Dictionary<Vector2Int, float>();
-        gScore[start] = 0;
-
-        while (openSet.Count > 0)
-        {
-            var currentTuple = openSet.Min;
-            openSet.Remove(currentTuple);
-            Vector2Int current = currentTuple.pos;
-
-            if (current == goal)
+            if (eval != null)
             {
-                return ReconstructPath(cameFrom, current);
+                eval.TrashCollected(other.gameObject);
             }
 
-            foreach (var neighbor in Neighbors(current))
-            {
-                if (IsCollision(neighbor)) continue;
+            Destroy(other.gameObject);
+            RecalculateFusionPath(); // 수거 후 경로 갱신
+        }
+    }
 
-                float tentative_gScore = gScore[current] + 1;
-                if (!gScore.ContainsKey(neighbor) || tentative_gScore < gScore[neighbor])
+    void RecalculateFusionPath()
+    {
+        trashObjects = GameObject.FindGameObjectsWithTag("Trash").ToList();
+        trashPositions = trashObjects.Select(t => RoundToGrid(t.transform.position)).ToList();
+
+        obstaclePositions = GameObject.FindGameObjectsWithTag("Obstacle")
+            .Select(o => RoundToGrid(o.transform.position)).ToList();
+
+        path.Clear();
+        currentPathIndex = 0;
+
+        if (trashPositions.Count == 0)
+        {
+            if (eval != null && !eval.hasSaved)
+            {
+                eval.SaveResults();
+                Debug.Log("모든 쓰레기 수거 완료");
+            }
+            enabled = false;
+            return;
+        }
+
+        Vector3 start = RoundToGrid(transform.position);
+        HashSet<Vector3> collected = new HashSet<Vector3>();
+
+        int maxIterations = 100;
+        for (int i = 0; i < maxIterations && trashPositions.Count > 0; i++)
+        {
+            Vector3 target = trashPositions.OrderBy(p => Vector3.Distance(start, p)).First();
+            List<Vector3> newPath = AStar(start, target);
+
+            if (newPath == null || newPath.Count == 0)
+            {
+                newPath = Dijkstra(start, target);
+            }
+
+            if (newPath != null && newPath.Count > 0)
+            {
+                path.AddRange(newPath.Skip(1));
+                start = newPath.Last();
+                collected.Add(target);
+            }
+
+            trashPositions = trashPositions.Where(p => !collected.Contains(p)).ToList();
+        }
+    }
+
+    List<Vector3> AStar(Vector3 start, Vector3 goal)
+    {
+        var open = new PriorityQueue<Vector3>();
+        var cameFrom = new Dictionary<Vector3, Vector3>();
+        var gScore = new Dictionary<Vector3, float> { [start] = 0 };
+
+        open.Enqueue(start, Vector3.Distance(start, goal));
+
+        while (open.Count > 0)
+        {
+            Vector3 current = open.Dequeue();
+            if (Vector3.Distance(current, goal) < 0.5f)
+                return ReconstructPath(cameFrom, current);
+
+            foreach (Vector3 neighbor in GetNeighbors(current))
+            {
+                if (IsObstacle(neighbor)) continue;
+
+                float tentative = gScore[current] + Vector3.Distance(current, neighbor);
+                if (!gScore.ContainsKey(neighbor) || tentative < gScore[neighbor])
                 {
                     cameFrom[neighbor] = current;
-                    gScore[neighbor] = tentative_gScore;
-                    float fScore = tentative_gScore + Distance(neighbor, goal);
-                    openSet.Add((fScore, counter++, neighbor));
+                    gScore[neighbor] = tentative;
+                    open.Enqueue(neighbor, tentative + Vector3.Distance(neighbor, goal));
                 }
             }
         }
-
-        return null; // 경로 없음
+        return null;
     }
 
-    // Dijkstra 알고리즘 구현
-    private List<Vector2Int> DijkstraSearch(Vector2Int start, Vector2Int goal)
+    List<Vector3> Dijkstra(Vector3 start, Vector3 goal)
     {
-        var heap = new SortedSet<(float cost, int count, Vector2Int pos)>(Comparer<(float, int, Vector2Int)>.Create((a, b) =>
+        var open = new PriorityQueue<Vector3>();
+        var cameFrom = new Dictionary<Vector3, Vector3>();
+        var cost = new Dictionary<Vector3, float> { [start] = 0 };
+
+        open.Enqueue(start, 0);
+
+        while (open.Count > 0)
         {
-            int cmp = a.cost.CompareTo(b.cost);
-            if (cmp == 0) cmp = a.count.CompareTo(b.count);
-            if (cmp == 0) cmp = a.pos.x.CompareTo(b.pos.x);
-            if (cmp == 0) cmp = a.pos.y.CompareTo(b.pos.y);
-            return cmp;
-        }));
-
-        int counter = 0;
-        heap.Add((0, counter++, start));
-
-        HashSet<Vector2Int> visited = new HashSet<Vector2Int>();
-        Dictionary<Vector2Int, Vector2Int> cameFrom = new Dictionary<Vector2Int, Vector2Int>();
-        Dictionary<Vector2Int, float> cost = new Dictionary<Vector2Int, float>();
-        cost[start] = 0;
-
-        while (heap.Count > 0)
-        {
-            var currentTuple = heap.Min;
-            heap.Remove(currentTuple);
-            Vector2Int current = currentTuple.pos;
-
-            if (current == goal)
-            {
+            Vector3 current = open.Dequeue();
+            if (Vector3.Distance(current, goal) < 0.5f)
                 return ReconstructPath(cameFrom, current);
-            }
 
-            if (visited.Contains(current)) continue;
-            visited.Add(current);
-
-            foreach (var neighbor in Neighbors(current))
+            foreach (Vector3 neighbor in GetNeighbors(current))
             {
-                if (IsCollision(neighbor)) continue;
+                if (IsObstacle(neighbor)) continue;
+
                 float newCost = cost[current] + 1;
                 if (!cost.ContainsKey(neighbor) || newCost < cost[neighbor])
                 {
                     cost[neighbor] = newCost;
                     cameFrom[neighbor] = current;
-                    heap.Add((newCost, counter++, neighbor));
+                    open.Enqueue(neighbor, newCost);
                 }
             }
         }
-
         return null;
     }
 
-    // 경로 역추적
-    private List<Vector2Int> ReconstructPath(Dictionary<Vector2Int, Vector2Int> cameFrom, Vector2Int current)
+    List<Vector3> ReconstructPath(Dictionary<Vector3, Vector3> cameFrom, Vector3 current)
     {
-        List<Vector2Int> path = new List<Vector2Int> { current };
+        var totalPath = new List<Vector3> { current };
         while (cameFrom.ContainsKey(current))
         {
             current = cameFrom[current];
-            path.Add(current);
+            totalPath.Insert(0, current);
         }
-        path.Reverse();
-        return path;
+        return totalPath;
     }
 
-    // Fusion 알고리즘 (메인 루프)
-    public List<Vector2Int> FusionAlgorithm()
+    List<Vector3> GetNeighbors(Vector3 pos)
     {
-        List<Vector2Int> path = new List<Vector2Int>();
-        Vector2Int currentPos = startPos;
-        HashSet<Vector2Int> trashSet = new HashSet<Vector2Int>(trashPositions);
-        int maxIterations = 1000;
-        int iteration = 0;
+        int x = Mathf.RoundToInt(pos.x);
+        int z = Mathf.RoundToInt(pos.z);
 
-        while (trashSet.Count > collected.Count && iteration < maxIterations)
+        return new List<Vector3> {
+            new Vector3(x + 1, 0, z),
+            new Vector3(x - 1, 0, z),
+            new Vector3(x, 0, z + 1),
+            new Vector3(x, 0, z - 1)
+        };
+    }
+
+    bool IsObstacle(Vector3 pos)
+    {
+        Vector3 rounded = RoundToGrid(pos);
+        return obstaclePositions.Contains(rounded);
+    }
+
+    Vector3 RoundToGrid(Vector3 pos)
+    {
+        return new Vector3(
+            Mathf.Round(pos.x),
+            0,
+            Mathf.Round(pos.z)
+        );
+    }
+
+    public class PriorityQueue<T>
+    {
+        private List<(float, T)> elements = new List<(float, T)>();
+        public int Count => elements.Count;
+        public void Enqueue(T item, float priority)
         {
-            iteration++;
-            var remainingTrash = new List<Vector2Int>();
-            foreach (var t in trashSet)
-            {
-                if (!collected.Contains(t))
-                    remainingTrash.Add(t);
-            }
-            if (remainingTrash.Count == 0) break;
-
-            // 1) 가장 가까운 쓰레기 찾기
-            Vector2Int target = remainingTrash[0];
-            float minDist = Distance(currentPos, target);
-            foreach (var t in remainingTrash)
-            {
-                float dist = Distance(currentPos, t);
-                if (dist < minDist)
-                {
-                    minDist = dist;
-                    target = t;
-                }
-            }
-
-            // 2) A* 경로 찾기
-            var route = AStarSearch(currentPos, target);
-
-            // A* 실패하면 Dijkstra로
-            if (route == null)
-                route = DijkstraSearch(currentPos, target);
-
-            // 둘 다 실패하면 다른 타겟 찾기
-            if (route == null)
-            {
-                bool found = false;
-                var altTargets = new List<Vector2Int>(remainingTrash);
-                altTargets.Remove(target);
-                altTargets.Sort((a, b) => Distance(currentPos, a).CompareTo(Distance(currentPos, b)));
-
-                foreach (var alt in altTargets)
-                {
-                    route = AStarSearch(currentPos, alt);
-                    if (route == null)
-                        route = DijkstraSearch(currentPos, alt);
-                    if (route != null)
-                    {
-                        target = alt;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break; // 갈 수 있는 곳 없음
-            }
-
-            // 3) 경로 이동, 수거
-            for (int i = 1; i < route.Count; i++)
-            {
-                Vector2Int step = route[i];
-
-                // 장애물 바로 앞이면 우회 시도
-                if (IsCollision(step))
-                {
-                    bool moved = false;
-                    foreach (var neighbor in Neighbors(currentPos))
-                    {
-                        if (!IsCollision(neighbor))
-                        {
-                            step = neighbor;
-                            moved = true;
-                            break;
-                        }
-                    }
-                    if (!moved) break; // 이동 불가
-                }
-
-                path.Add(step);
-                currentPos = step;
-
-                if (trashSet.Contains(currentPos) && !collected.Contains(currentPos))
-                {
-                    collected.Add(currentPos);
-                    // Debug.Log($"Collected trash at {currentPos}");
-                }
-            }
+            elements.Add((priority, item));
+            elements.Sort((a, b) => a.Item1.CompareTo(b.Item1));
         }
-
-        return path;
+        public T Dequeue()
+        {
+            var item = elements[0];
+            elements.RemoveAt(0);
+            return item.Item2;
+        }
     }
 }
