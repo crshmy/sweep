@@ -62,6 +62,7 @@ namespace Crest
 
         SampleHeightHelper _sampleHeightHelper = new SampleHeightHelper();
         SampleFlowHelper _sampleFlowHelper = new SampleFlowHelper();
+        public Transform overrideTransform;
 
         void Start()
         {

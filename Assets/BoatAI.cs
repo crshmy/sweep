@@ -1,47 +1,173 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 [RequireComponent(typeof(Rigidbody))]
-public class BoatAI : MonoBehaviour
+public class BoatAI_ClusterBased : MonoBehaviour
 {
     public float speed = 5f;
+    public float rotationSpeed = 5f;
+    public float obstacleAvoidanceRadius = 5f;
+    public LayerMask obstacleLayer;
+
     private Rigidbody rb;
-    private EvaluationManager eval;
+    public float clusterArrivalThreshold = 0.8f;
+    private TrashCluster currentCluster;
+    private List<TrashCluster> allClusters;
+    private int currentClusterIndex = -1;
 
-    private List<Vector3> path = new List<Vector3>();
-    private int currentPathIndex = 0;
-    private float reachThreshold = 0.5f;
+    private enum State { Idle, Navigating, Collecting, Done }
+    private State currentState = State.Idle;
 
-    private List<GameObject> trashObjects;
-    private List<Vector3> trashPositions;
-    private List<Vector3> obstaclePositions;
+    private List<Vector3> zigzagPoints = new List<Vector3>();
+
+    public static Dictionary<TrashCluster, int> clusterCollected = new();
 
     void Start()
     {
         rb = GetComponent<Rigidbody>();
-        eval = FindObjectOfType<EvaluationManager>();
-
-        RecalculateFusionPath(); // 최초 경로 계산
+        SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+        allClusters = spawner.clusters.ToList();
+        GoToNextCluster();
     }
 
     void FixedUpdate()
     {
-        if (path.Count == 0 || currentPathIndex >= path.Count)
+        VisitedGridSystem.Instance?.MarkVisited(transform.position);
+
+        switch (currentState)
         {
-            RecalculateFusionPath();
+            case State.Navigating:
+                NavigateTo(currentCluster.center);
+                float distToCluster = Vector3.Distance(transform.position, currentCluster.center);
+                if (distToCluster < currentCluster.radius * clusterArrivalThreshold)
+                {
+                    EnterCollectionMode();
+                }
+                break;
+
+            case State.Collecting:
+                FollowZigZagPath();
+                break;
+
+            case State.Done:
+                rb.velocity = Vector3.zero;
+                break;
+        }
+    }
+
+    void GoToNextCluster()
+    {
+        currentClusterIndex++;
+        if (currentClusterIndex >= allClusters.Count)
+        {
+            currentState = State.Done;
+            Debug.Log("모든 클러스터 수거 완료");
+            ShowClusterStats();
             return;
         }
 
-        Vector3 targetPos = path[currentPathIndex];
-        Vector3 dir = (targetPos - transform.position).normalized;
-        rb.MovePosition(rb.position + dir * speed * Time.fixedDeltaTime);
-        Quaternion rot = Quaternion.LookRotation(dir);
-        rb.MoveRotation(Quaternion.Slerp(rb.rotation, rot, 5f * Time.fixedDeltaTime));
+        currentCluster = allClusters[currentClusterIndex];
+        currentState = State.Navigating;
+        Debug.Log("다음 클러스터 이동: " + currentCluster.name);
+    }
 
-        if (Vector3.Distance(transform.position, targetPos) < reachThreshold)
+    void EnterCollectionMode()
+    {
+        currentState = State.Collecting;
+        GenerateZigZagPath();
+    }
+
+    void NavigateTo(Vector3 target)
+    {
+        Vector3 toTarget = (target - transform.position).normalized;
+        Vector3 avoidance = AvoidObstacles();
+        Vector3 finalDir = (toTarget + avoidance).normalized;
+
+        rb.MovePosition(rb.position + finalDir * speed * Time.fixedDeltaTime);
+
+        if (finalDir != Vector3.zero)
         {
-            currentPathIndex++;
+            Quaternion rot = Quaternion.LookRotation(finalDir, Vector3.up);
+            rb.MoveRotation(Quaternion.Slerp(rb.rotation, rot, rotationSpeed * Time.fixedDeltaTime));
+        }
+    }
+
+    Vector3 AvoidObstacles()
+    {
+        Vector3 avoid = Vector3.zero;
+        Collider[] hits = Physics.OverlapSphere(transform.position, obstacleAvoidanceRadius);
+
+        foreach (Collider hit in hits)
+        {
+            if (((1 << hit.gameObject.layer) & obstacleLayer) != 0)
+            {
+                Vector3 away = transform.position - hit.ClosestPoint(transform.position);
+                float dist = away.magnitude;
+
+                if (dist > 0)
+                {
+                    float strength = hit.CompareTag("StaticObstacle") ? 1f : 0.3f;
+                    avoid += (away.normalized / dist) * strength;
+                }
+            }
+        }
+
+        return avoid.normalized;
+    }
+
+    void GenerateZigZagPath()
+    {
+        zigzagPoints.Clear();
+
+        int lineCount = Mathf.Max(4, Mathf.FloorToInt(currentCluster.radius / 2f));
+        float spacing = currentCluster.radius * 2f / (lineCount - 1);
+        float forwardLength = currentCluster.radius * 1.5f;
+
+        Vector3 forwardStart = currentCluster.center - transform.forward * (forwardLength / 2f);
+        bool leftToRight = true;
+
+        for (int i = 0; i < lineCount; i++)
+        {
+            float offset = -currentCluster.radius + spacing * i;
+            Vector3 side = transform.right * offset;
+            Vector3 start = forwardStart + side;
+            Vector3 end = start + transform.forward * forwardLength;
+
+            if (!leftToRight)
+            {
+                var temp = start;
+                start = end;
+                end = temp;
+            }
+
+            zigzagPoints.Add(start);
+            zigzagPoints.Add(end);
+            leftToRight = !leftToRight;
+        }
+    }
+
+    void FollowZigZagPath()
+    {
+        if (zigzagPoints.Count == 0)
+        {
+            GoToNextCluster();
+            return;
+        }
+
+        Vector3 target = zigzagPoints[0];
+        Vector3 dir = (target - transform.position).normalized;
+        rb.MovePosition(rb.position + dir * speed * Time.fixedDeltaTime);
+
+        Quaternion rot = Quaternion.LookRotation(dir, Vector3.up);
+        rb.MoveRotation(Quaternion.Slerp(rb.rotation, rot, rotationSpeed * Time.fixedDeltaTime));
+
+        if (Vector3.Distance(transform.position, target) < 1f)
+        {
+            zigzagPoints.RemoveAt(0);
         }
     }
 
@@ -49,176 +175,36 @@ public class BoatAI : MonoBehaviour
     {
         if (other.CompareTag("Trash"))
         {
-            if (eval != null)
+            TrashInfo info = other.GetComponent<TrashInfo>();
+            if (info != null && info.cluster != null)
             {
-                eval.TrashCollected(other.gameObject);
+                if (!clusterCollected.ContainsKey(info.cluster))
+                    clusterCollected[info.cluster] = 0;
+
+                if (!other.gameObject.TryGetComponent<AlreadyCollected>(out _))
+                {
+                    clusterCollected[info.cluster]++;
+                    other.gameObject.AddComponent<AlreadyCollected>();
+                }
             }
 
             Destroy(other.gameObject);
-            RecalculateFusionPath(); // 수거 후 경로 갱신
         }
     }
 
-    void RecalculateFusionPath()
+    void ShowClusterStats()
     {
-        trashObjects = GameObject.FindGameObjectsWithTag("Trash").ToList();
-        trashPositions = trashObjects.Select(t => RoundToGrid(t.transform.position)).ToList();
+        SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+        if (spawner == null || spawner.clusterTrashCount == null) return;
 
-        obstaclePositions = GameObject.FindGameObjectsWithTag("Obstacle")
-            .Select(o => RoundToGrid(o.transform.position)).ToList();
-
-        path.Clear();
-        currentPathIndex = 0;
-
-        if (trashPositions.Count == 0)
+        foreach (var cluster in spawner.clusters)
         {
-            if (eval != null && !eval.hasSaved)
-            {
-                eval.SaveResults();
-                Debug.Log("모든 쓰레기 수거 완료");
-            }
-            enabled = false;
-            return;
-        }
-
-        Vector3 start = RoundToGrid(transform.position);
-        HashSet<Vector3> collected = new HashSet<Vector3>();
-
-        int maxIterations = 100;
-        for (int i = 0; i < maxIterations && trashPositions.Count > 0; i++)
-        {
-            Vector3 target = trashPositions.OrderBy(p => Vector3.Distance(start, p)).First();
-            List<Vector3> newPath = AStar(start, target);
-
-            if (newPath == null || newPath.Count == 0)
-            {
-                newPath = Dijkstra(start, target);
-            }
-
-            if (newPath != null && newPath.Count > 0)
-            {
-                path.AddRange(newPath.Skip(1));
-                start = newPath.Last();
-                collected.Add(target);
-            }
-
-            trashPositions = trashPositions.Where(p => !collected.Contains(p)).ToList();
-        }
-    }
-
-    List<Vector3> AStar(Vector3 start, Vector3 goal)
-    {
-        var open = new PriorityQueue<Vector3>();
-        var cameFrom = new Dictionary<Vector3, Vector3>();
-        var gScore = new Dictionary<Vector3, float> { [start] = 0 };
-
-        open.Enqueue(start, Vector3.Distance(start, goal));
-
-        while (open.Count > 0)
-        {
-            Vector3 current = open.Dequeue();
-            if (Vector3.Distance(current, goal) < 0.5f)
-                return ReconstructPath(cameFrom, current);
-
-            foreach (Vector3 neighbor in GetNeighbors(current))
-            {
-                if (IsObstacle(neighbor)) continue;
-
-                float tentative = gScore[current] + Vector3.Distance(current, neighbor);
-                if (!gScore.ContainsKey(neighbor) || tentative < gScore[neighbor])
-                {
-                    cameFrom[neighbor] = current;
-                    gScore[neighbor] = tentative;
-                    open.Enqueue(neighbor, tentative + Vector3.Distance(neighbor, goal));
-                }
-            }
-        }
-        return null;
-    }
-
-    List<Vector3> Dijkstra(Vector3 start, Vector3 goal)
-    {
-        var open = new PriorityQueue<Vector3>();
-        var cameFrom = new Dictionary<Vector3, Vector3>();
-        var cost = new Dictionary<Vector3, float> { [start] = 0 };
-
-        open.Enqueue(start, 0);
-
-        while (open.Count > 0)
-        {
-            Vector3 current = open.Dequeue();
-            if (Vector3.Distance(current, goal) < 0.5f)
-                return ReconstructPath(cameFrom, current);
-
-            foreach (Vector3 neighbor in GetNeighbors(current))
-            {
-                if (IsObstacle(neighbor)) continue;
-
-                float newCost = cost[current] + 1;
-                if (!cost.ContainsKey(neighbor) || newCost < cost[neighbor])
-                {
-                    cost[neighbor] = newCost;
-                    cameFrom[neighbor] = current;
-                    open.Enqueue(neighbor, newCost);
-                }
-            }
-        }
-        return null;
-    }
-
-    List<Vector3> ReconstructPath(Dictionary<Vector3, Vector3> cameFrom, Vector3 current)
-    {
-        var totalPath = new List<Vector3> { current };
-        while (cameFrom.ContainsKey(current))
-        {
-            current = cameFrom[current];
-            totalPath.Insert(0, current);
-        }
-        return totalPath;
-    }
-
-    List<Vector3> GetNeighbors(Vector3 pos)
-    {
-        int x = Mathf.RoundToInt(pos.x);
-        int z = Mathf.RoundToInt(pos.z);
-
-        return new List<Vector3> {
-            new Vector3(x + 1, 0, z),
-            new Vector3(x - 1, 0, z),
-            new Vector3(x, 0, z + 1),
-            new Vector3(x, 0, z - 1)
-        };
-    }
-
-    bool IsObstacle(Vector3 pos)
-    {
-        Vector3 rounded = RoundToGrid(pos);
-        return obstaclePositions.Contains(rounded);
-    }
-
-    Vector3 RoundToGrid(Vector3 pos)
-    {
-        return new Vector3(
-            Mathf.Round(pos.x),
-            0,
-            Mathf.Round(pos.z)
-        );
-    }
-
-    public class PriorityQueue<T>
-    {
-        private List<(float, T)> elements = new List<(float, T)>();
-        public int Count => elements.Count;
-        public void Enqueue(T item, float priority)
-        {
-            elements.Add((priority, item));
-            elements.Sort((a, b) => a.Item1.CompareTo(b.Item1));
-        }
-        public T Dequeue()
-        {
-            var item = elements[0];
-            elements.RemoveAt(0);
-            return item.Item2;
+            int total = spawner.clusterTrashCount.ContainsKey(cluster) ? spawner.clusterTrashCount[cluster] : 0;
+            int collected = clusterCollected.ContainsKey(cluster) ? clusterCollected[cluster] : 0;
+            float rate = total == 0 ? 0f : (float)collected / total * 100f;
+            Debug.Log($"클러스터 {cluster.name} 수거율: {rate:F1}%");
         }
     }
 }
+
+public class AlreadyCollected : MonoBehaviour {}
