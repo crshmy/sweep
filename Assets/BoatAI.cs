@@ -33,25 +33,41 @@ public class BoatAI_ClusterBased : MonoBehaviour
 
     private HashSet<Collider> passedObstacles = new();
 
+    private float totalDistance = 0f;
+    private Vector3 lastPosition;
+    private float startTime;
+    private int earlyCollectedCount = 0;
+
+
+
+
     void Start()
     {
         rb = GetComponent<Rigidbody>();
         SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
         allClusters = spawner.clusters.ToList();
 
-        initialAlgorithmName = algorithmName; //  초기 설정값 저장
+        initialAlgorithmName = algorithmName;
 
         logger = FindObjectOfType<LogManager>();
         logger?.Log("시뮬레이션 시작", transform.position);
         logger?.Log($"알고리즘 사용됨: {algorithmName}", transform.position);
         logger?.Log($"[설정] Speed: {speed}, Rotation Speed: {rotationSpeed}, Avoid Radius: {obstacleAvoidanceRadius}, Cluster Arrival Threshold: {clusterArrivalThreshold}, Obstacle Layer: {LayerMask.LayerToName(obstacleLayer.value)}", transform.position);
 
+        startTime = Time.time;  //  시작 시간 기록
+        lastPosition = transform.position;  // 거리 측정 시작점
         GoToNextCluster();
     }
+
 
     void FixedUpdate()
     {
         VisitedGridSystem.Instance?.MarkVisited(transform.position);
+
+        //  이동 거리 측정
+        float moved = Vector3.Distance(transform.position, lastPosition);
+        totalDistance += moved;
+        lastPosition = transform.position;
 
         switch (currentState)
         {
@@ -75,45 +91,90 @@ public class BoatAI_ClusterBased : MonoBehaviour
         }
     }
 
+
+    TrashCluster ObstacleAwareSelect(Vector3 pos, out string subAlgorithmName)
+    {
+        subAlgorithmName = "ObstacleAware";
+        SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+
+        TrashCluster bestCluster = null;
+        float bestScore = float.MaxValue;
+        string reasonLog = "";
+
+        foreach (var cluster in allClusters)
+        {
+            if (clusterCollected.ContainsKey(cluster)) continue;
+
+            float distance = Vector3.Distance(pos, cluster.center);
+            int obstacleCount = Physics.OverlapSphere(cluster.center, 5f, obstacleLayer).Length;
+
+            float score = distance + obstacleCount * 5f;
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestCluster = cluster;
+                reasonLog = $"[선택 이유: {cluster.name}] 거리: {distance:F1}, 장애물 수: {obstacleCount}, 최종 점수: {score:F2}";
+            }
+        }
+
+        if (bestCluster != null)
+            logger?.Log(reasonLog, pos);
+
+        return bestCluster;
+    }
+
+
+
     void GoToNextCluster()
     {
-        if (clusterCollected.Keys.Count >= allClusters.Count)
-        {
-            currentState = State.Done;
-            logger?.Log("모든 클러스터 수거 완료", transform.position);
-            ShowClusterStats();
-            logger?.Log($"장애물 충돌 횟수: {obstacleCollisionCount}", transform.position);
-            logger?.SaveToCSV(initialAlgorithmName); //  유저 입력값으로 저장
-            return;
-        }
+if (clusterCollected.Keys.Count >= allClusters.Count)
+{
+    currentState = State.Done;
+    logger?.Log("모든 클러스터 수거 완료", transform.position);
+    ShowClusterStats();
+    logger?.Log($"장애물 충돌 횟수: {obstacleCollisionCount}", transform.position);
+    logger?.Log($"총 이동 거리: {totalDistance:F2}m", transform.position);
+
+    SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+    int totalTrashCount = spawner.clusterTrashCount.Values.Sum();
+    float earlyPercent = totalTrashCount == 0 ? 0f : (float)earlyCollectedCount / totalTrashCount * 100f;
+    logger?.Log($"2분 이내 수거 비율: {earlyPercent:F1}% ({earlyCollectedCount} / {totalTrashCount})", transform.position);
+
+    logger?.SaveToCSV(algorithmName);
+    return;
+}
+
 
         Vector3 myPos = transform.position;
+        string selectedAlgoDetail = "";
+
+        //  알고리즘: Predictive 고정
         TrashCluster selected = null;
 
-        int algoIndex = clusterCollected.Count % 3;
-        switch (algoIndex)
-        {
-            case 0:
-                selected = GreedySelect(myPos);
-                algorithmName = "Greedy";
-                break;
-            case 1:
-                selected = DensitySelect(myPos);
-                algorithmName = "DensityBased";
-                break;
-            case 2:
-                selected = NearestSelect(myPos);
-                algorithmName = "Nearest";
-                break;
-        }
+        if (algorithmName == "Greedy")
+            selected = ObstacleAwareSelect(transform.position, out selectedAlgoDetail);
+        else if (algorithmName == "Predictive")
+            selected = PredictiveSelect(transform.position, out selectedAlgoDetail);
+        else if (algorithmName == "Fusion")
+            selected = FusionSelect(transform.position, out selectedAlgoDetail);
+        else if (algorithmName == "Score")
+            selected = ScoreSelect(transform.position, out selectedAlgoDetail);
+
 
         if (selected == null)
         {
             currentState = State.Done;
             logger?.Log("선택 가능한 클러스터 없음", transform.position);
             ShowClusterStats();
-            logger?.SaveToCSV(initialAlgorithmName);
+            logger?.SaveToCSV(algorithmName);
             return;
+        }
+
+        //  수거 순서 로깅 (이전 → 새 클러스터)
+        if (currentCluster != null)
+        {
+            logger?.Log($"클러스터 {currentCluster.name} → {selected.name}", transform.position);
         }
 
         currentCluster = selected;
@@ -122,22 +183,159 @@ public class BoatAI_ClusterBased : MonoBehaviour
         logger?.Log($"클러스터 {currentCluster.name}로 이동 시작", transform.position);
     }
 
-    TrashCluster GreedySelect(Vector3 pos)
+    TrashCluster PredictiveSelect(Vector3 pos, out string subAlgorithmName)
     {
-        return allClusters.Where(c => !clusterCollected.ContainsKey(c)).OrderBy(c => Vector3.Distance(pos, c.center)).FirstOrDefault();
+        subAlgorithmName = "";
+        int K = 5;  // 후보 클러스터 수
+        SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+
+        // 아직 수거하지 않은 클러스터 후보들
+        var candidates = allClusters.Where(c => !clusterCollected.ContainsKey(c))
+                                    .OrderBy(c => Vector3.Distance(pos, c.center))
+                                    .Take(K)
+                                    .ToList();
+
+        if (candidates.Count == 0) return null;
+
+        TrashCluster bestCluster = null;
+        float bestScore = float.MaxValue;
+        string reasonLog = "";
+
+        foreach (var cluster in candidates)
+        {
+            float distance = Vector3.Distance(pos, cluster.center);
+
+            int trashCount = spawner.clusterTrashCount.ContainsKey(cluster) ? spawner.clusterTrashCount[cluster] : 0;
+            int nearbyClusters = allClusters.Count(c => c != cluster && Vector3.Distance(cluster.center, c.center) < 10f && !clusterCollected.ContainsKey(c));
+            int obstacleCount = Physics.OverlapSphere(cluster.center, 5f, obstacleLayer).Length;
+
+            // Predictive score 계산 (임의 가중치)
+            float score = distance * 1.0f - trashCount * 2.0f - nearbyClusters * 1.5f + obstacleCount * 3.0f;
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestCluster = cluster;
+
+                reasonLog = $"[선택 이유: {cluster.name}] 거리: {distance:F1}, 쓰레기 수: {trashCount}, 주변 클러스터: {nearbyClusters}, 장애물 수: {obstacleCount}, 최종 점수: {score:F2}";
+            }
+        }
+
+        if (bestCluster != null)
+            logger?.Log(reasonLog, pos);
+
+        return bestCluster;
+    }
+    TrashCluster FusionSelect(Vector3 pos, out string subAlgorithmName)
+    {
+        subAlgorithmName = "Fusion";
+        SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+        var trashObjects = GameObject.FindGameObjectsWithTag("Trash");
+
+        float bestScore = float.MaxValue;
+        TrashInfo bestTrashInfo = null;
+
+        foreach (var trash in trashObjects)
+        {
+            TrashInfo info = trash.GetComponent<TrashInfo>();
+            if (info == null || clusterCollected.ContainsKey(info.cluster)) continue;
+
+            Vector3 target = trash.transform.position;
+
+            // === 경로 추정: 장애물 회피를 고려한 거리 측정 ===
+            float pathLength = EstimateDirectPathLength(pos, target);
+            if (pathLength < 0) continue;
+
+            // === 장애물 밀집도 계산 (3m 이내) ===
+            int obstacleCount = Physics.OverlapSphere(target, 3f, obstacleLayer).Length;
+
+            // === 점수 계산 ===
+            float score = pathLength + obstacleCount * 3f;
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestTrashInfo = info;
+            }
+        }
+
+        if (bestTrashInfo != null)
+        {
+            logger?.Log($"Fusion 선택: {bestTrashInfo.cluster.name}, 예상 경로 길이: {bestScore - 3f * Physics.OverlapSphere(bestTrashInfo.transform.position, 3f, obstacleLayer).Length:F1}, 장애물 보정 포함 점수: {bestScore:F1}", pos);
+            return bestTrashInfo.cluster;
+        }
+
+        return null;
     }
 
-    TrashCluster DensitySelect(Vector3 pos)
+
+    float EstimateDirectPathLength(Vector3 start, Vector3 goal)
+    {
+        Vector3 dir = (goal - start).normalized;
+        float totalDist = Vector3.Distance(start, goal);
+        float sampledDist = 0f;
+        int sampleCount = Mathf.CeilToInt(totalDist / 1f);
+        Vector3 current = start;
+
+        for (int i = 0; i < sampleCount; i++)
+        {
+            current += dir * 1f;
+            sampledDist += 1f;
+
+            if (Physics.CheckSphere(current, 0.5f, obstacleLayer))
+            {
+                return -1f; // 장애물에 막힌 경로
+            }
+        }
+
+        return sampledDist;
+    }
+
+
+
+
+    TrashCluster ScoreSelect(Vector3 pos, out string subAlgorithmName)
     {
         SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
-        return allClusters.Where(c => !clusterCollected.ContainsKey(c))
-            .OrderByDescending(c => spawner.clusterTrashCount.ContainsKey(c) ? spawner.clusterTrashCount[c] : 0).FirstOrDefault();
+
+        float weightDistance = 0.4f;
+        float weightTrashCount = -1.2f;
+        float weightObstacleCount = 2.0f;
+        float weightNearbyClusters = -1.0f;
+
+        TrashCluster bestCluster = null;
+        float bestScore = float.MaxValue;
+        string reasonLog = "";
+        subAlgorithmName = "Score";
+
+        foreach (var cluster in allClusters)
+        {
+            if (clusterCollected.ContainsKey(cluster)) continue;
+
+            float distance = Vector3.Distance(pos, cluster.center);
+            int trashCount = spawner.clusterTrashCount.ContainsKey(cluster) ? spawner.clusterTrashCount[cluster] : 0;
+            int obstacleCount = Physics.OverlapSphere(cluster.center, 5f, obstacleLayer).Length;
+            int nearbyClusters = allClusters.Count(c => c != cluster && Vector3.Distance(cluster.center, c.center) < 10f && !clusterCollected.ContainsKey(c));
+
+            float score = weightDistance * distance +
+                          weightTrashCount * trashCount +
+                          weightObstacleCount * obstacleCount +
+                          weightNearbyClusters * nearbyClusters;
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestCluster = cluster;
+                reasonLog = $"[선택 이유: {cluster.name}] 거리: {distance:F1}, 쓰레기 수: {trashCount}, 장애물 수: {obstacleCount}, 주변 클러스터: {nearbyClusters}, 최종 점수: {score:F2}";
+            }
+        }
+
+        if (bestCluster != null)
+            logger?.Log(reasonLog, pos);
+
+        return bestCluster;
     }
 
-    TrashCluster NearestSelect(Vector3 pos)
-    {
-        return allClusters.Where(c => !clusterCollected.ContainsKey(c)).OrderBy(c => Vector3.Distance(pos, c.center)).FirstOrDefault();
-    }
 
     void EnterCollectionMode()
     {
@@ -175,16 +373,17 @@ public class BoatAI_ClusterBased : MonoBehaviour
                 Vector3 away = transform.position - hit.ClosestPoint(transform.position);
                 float dist = away.magnitude;
 
-                if (dist > 0)
-                {
-                    float strength = hit.CompareTag("Obstacle") ? 1f : 0.3f;
-                    avoid += (away.normalized / dist) * strength;
-                }
+                if (dist < 1f) continue; // 너무 가까우면 무시
+
+                // 힘 제한: 0.5보다 크게 못하게 조정
+                float strength = Mathf.Clamp(hit.CompareTag("Obstacle") ? 1f / dist : 0.3f / dist, 0f, 0.5f);
+                avoid += away.normalized * strength;
             }
         }
 
         return avoid.normalized;
     }
+
 
     void GenerateZigZagPath()
     {
@@ -217,61 +416,91 @@ public class BoatAI_ClusterBased : MonoBehaviour
         }
     }
 
-    void FollowZigZagPath()
+void FollowZigZagPath()
+{
+    if (zigzagPoints.Count == 0)
     {
-        if (zigzagPoints.Count == 0)
-        {
-            logger?.Log($"클러스터 {currentCluster.name} 수거 완료", transform.position);
-            clusterCollected[currentCluster] = clusterCollected.ContainsKey(currentCluster) ? clusterCollected[currentCluster] : 0;
-            GoToNextCluster();
-            return;
-        }
-
-        Vector3 target = zigzagPoints[0];
-        Vector3 dir = (target - transform.position).normalized;
-        Vector3 avoidance = AvoidObstacles();
-        Vector3 finalDir = (dir + avoidance).normalized;
-
-        rb.MovePosition(rb.position + finalDir * speed * Time.fixedDeltaTime);
-
-        Quaternion rot = Quaternion.LookRotation(finalDir, Vector3.up);
-        rb.MoveRotation(Quaternion.Slerp(rb.rotation, rot, rotationSpeed * Time.fixedDeltaTime));
-
-        if (Vector3.Distance(transform.position, target) < 1f)
-        {
-            zigzagPoints.RemoveAt(0);
-        }
+        logger?.Log($"클러스터 {currentCluster.name} 수거 완료", transform.position);
+        clusterCollected[currentCluster] = clusterCollected.ContainsKey(currentCluster)
+            ? clusterCollected[currentCluster]
+            : 0;
+        GoToNextCluster();
+        return;
     }
+
+    // 현재 타겟 지점
+    Vector3 target = zigzagPoints[0];
+    Vector3 dir = (target - transform.position).normalized;
+
+    // 꺾이는 지점을 감지할 거리 (1m 안쪽을 'turning area'로 본다)
+    const float cornerThreshold = 1f;
+    bool atCorner = Vector3.Distance(transform.position, target) < cornerThreshold;
+
+    // 코너가 아니면 회피 적용, 코너 안이면 회피 벡터를 0으로
+    Vector3 avoidance = atCorner
+        ? Vector3.zero
+        : AvoidObstacles();
+
+    // 최종 이동 방향
+    Vector3 finalDir = (dir + avoidance).normalized;
+
+    // 이동
+    rb.MovePosition(rb.position + finalDir * speed * Time.fixedDeltaTime);
+
+    // 회전 (꺾일 때도 자연스럽게 방향 전환)
+    Quaternion rot = Quaternion.LookRotation(finalDir, Vector3.up);
+    rb.MoveRotation(Quaternion.Slerp(rb.rotation, rot, rotationSpeed * Time.fixedDeltaTime));
+
+    // 목표 지점 도달 시 다음 포인트로
+    if (Vector3.Distance(transform.position, target) < cornerThreshold)
+    {
+        zigzagPoints.RemoveAt(0);
+    }
+}
+
 
     void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("Trash"))
+        // 쓰레기만 처리
+        if (!other.CompareTag("Trash"))
         {
-            TrashInfo info = other.GetComponent<TrashInfo>();
-            if (info != null && info.cluster != null)
+            // 장애물 충돌만 기록
+            if (((1 << other.gameObject.layer) & obstacleLayer) != 0)
             {
-                if (!clusterCollected.ContainsKey(info.cluster))
-                    clusterCollected[info.cluster] = 0;
-
-                if (!other.gameObject.TryGetComponent<AlreadyCollected>(out _))
+                if (!passedObstacles.Contains(other))
                 {
-                    clusterCollected[info.cluster]++;
-                    other.gameObject.AddComponent<AlreadyCollected>();
+                    obstacleCollisionCount++;
+                    passedObstacles.Add(other);
+                    logger?.Log($"장애물 트리거 충돌: {other.gameObject.name}", transform.position);
                 }
             }
+            return;
+        }
 
-            Destroy(other.gameObject);
-        }
-        else if (((1 << other.gameObject.layer) & obstacleLayer) != 0 && !other.CompareTag("Trash"))
+        // TrashInfo 가져오기
+        TrashInfo info = other.GetComponent<TrashInfo>();
+        // 목적 클러스터 쓰레기 아니면 무시
+        if (info == null || info.cluster != currentCluster)
+            return;
+
+        // 이미 수거한 적이 없으면 카운트
+        if (!clusterCollected.ContainsKey(currentCluster))
+            clusterCollected[currentCluster] = 0;
+
+        if (!other.gameObject.TryGetComponent<AlreadyCollected>(out _))
         {
-            if (!passedObstacles.Contains(other))
-            {
-                obstacleCollisionCount++;
-                passedObstacles.Add(other);
-                logger?.Log($"장애물 트리거 충돌: {other.gameObject.name}", transform.position);
-            }
+            clusterCollected[currentCluster]++;
+            other.gameObject.AddComponent<AlreadyCollected>();
+
+            // 2분 이내 수거 기록
+            if (Time.time - startTime <= 120f)
+                earlyCollectedCount++;
         }
+
+        Destroy(other.gameObject);
     }
+
+
 
     void ShowClusterStats()
     {
@@ -292,9 +521,22 @@ public class BoatAI_ClusterBased : MonoBehaviour
 
     void OnApplicationQuit()
     {
+        logger?.Log("시뮬레이션 강제 종료됨", transform.position);
+        logger?.Log($"총 이동 거리: {totalDistance:F2}m", transform.position);
+
+        SmartTrashSpawner spawner = FindObjectOfType<SmartTrashSpawner>();
+        int totalTrashCount = spawner.clusterTrashCount.Values.Sum();
+        float earlyPercent = totalTrashCount == 0 ? 0f : (float)earlyCollectedCount / totalTrashCount * 100f;
+        logger?.Log($"2분 이내 수거 비율: {earlyPercent:F1}% ({earlyCollectedCount} / {totalTrashCount})", transform.position);
+
         logger?.Log($"장애물 충돌 횟수: {obstacleCollisionCount}", transform.position);
-        logger?.SaveToCSV(initialAlgorithmName); // 유저 입력값으로 저장
+        logger?.SaveToCSV(initialAlgorithmName);
     }
+
+
+
 }
 
 public class AlreadyCollected : MonoBehaviour { }
+
+

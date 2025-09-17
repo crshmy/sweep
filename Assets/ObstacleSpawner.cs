@@ -65,7 +65,8 @@ public class SmartObstacleSpawner : MonoBehaviour
 
                 if (IsPositionClear(pos))
                 {
-                    SpawnObstacle(prefabs, pos, useBuoyancy);
+                    GameObject obj = SpawnObstacle(prefabs, pos, useBuoyancy);
+                    obj.tag = "KnownObstacle"; //  알고리즘에 반영되는 장애물
                     spawned++;
                 }
                 attempts++;
@@ -85,7 +86,8 @@ public class SmartObstacleSpawner : MonoBehaviour
 
             if (IsPositionClear(pos))
             {
-                SpawnObstacle(prefabs, pos, useBuoyancy);
+                GameObject obj = SpawnObstacle(prefabs, pos, useBuoyancy);
+                obj.tag = "UnknownObstacle"; //  알고리즘에서 제외, 회피만 함
                 spawned++;
             }
             attempts++;
@@ -97,18 +99,16 @@ public class SmartObstacleSpawner : MonoBehaviour
         return !Physics.CheckSphere(pos + Vector3.up * 0.5f, overlapCheckRadius);
     }
 
-    void SpawnObstacle(GameObject[] prefabs, Vector3 pos, bool useBuoyancy)
+    GameObject SpawnObstacle(GameObject[] prefabs, Vector3 pos, bool useBuoyancy)
     {
         GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
         GameObject obj = Instantiate(prefab, pos, Quaternion.identity);
 
-        //  고정 장애물만 랜덤 크기 조정
         if (!useBuoyancy)
         {
-            float scale = Random.Range(0.8f, 1.5f); // 너가 원하는 크기 범위로 조절
+            float scale = Random.Range(0.8f, 1.5f);
             obj.transform.localScale *= scale;
 
-            // Rigidbody 있으면 제거
             if (obj.TryGetComponent<Rigidbody>(out Rigidbody rb))
             {
                 Destroy(rb);
@@ -116,14 +116,14 @@ public class SmartObstacleSpawner : MonoBehaviour
         }
         else
         {
-            // 부력용 장애물은 Rigidbody 필요
             if (!obj.TryGetComponent<Rigidbody>(out _))
             {
                 obj.AddComponent<Rigidbody>();
             }
         }
-    }
 
+        return obj;
+    }
 
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()

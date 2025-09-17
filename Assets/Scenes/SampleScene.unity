@@ -673,7 +673,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 47374095dc9653b47a133c58945a37d1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  size: {x: 100, y: 100}
+  size: {x: 500, y: 500}
   gizmoColor: {r: 0, g: 1, b: 1, a: 1}
 --- !u!4 &510492942
 Transform:
@@ -1013,11 +1013,61 @@ MonoBehaviour:
   - {fileID: 8280039493998787043, guid: 9269ea0b3480d424ea90072161e59db8, type: 3}
   buoyantObstacles:
   - {fileID: 100004, guid: 98d89738379b58d4fa6366837b44232a, type: 3}
-  staticClusters: []
-  buoyantClusters: []
-  dispersedStaticCount: 10
-  dispersedBuoyantCount: 10
-  spawnAreaSize: {x: 100, y: 100}
+  staticClusters:
+  - name: a
+    center: {x: 15, y: 0, z: 15}
+    radius: 14
+    count: 1
+    gizmoColor: {r: 1, g: 0, b: 0, a: 0}
+  - name: b
+    center: {x: -20, y: 0, z: 35}
+    radius: 1
+    count: 1
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: c
+    center: {x: -30, y: 0, z: -20}
+    radius: 9
+    count: 1
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: d
+    center: {x: 40, y: 0, z: 40}
+    radius: 1
+    count: 1
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: e
+    center: {x: -40, y: 0, z: 40}
+    radius: 4
+    count: 0
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  buoyantClusters:
+  - name: 
+    center: {x: 15, y: 0, z: 15}
+    radius: 14
+    count: 1
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: 
+    center: {x: -20, y: 0, z: 35}
+    radius: 1
+    count: 0
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: 
+    center: {x: 0, y: 0, z: 0}
+    radius: 9
+    count: 0
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: 
+    center: {x: -30, y: 0, z: -20}
+    radius: 1
+    count: 1
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  - name: 
+    center: {x: 40, y: 0, z: 40}
+    radius: 4
+    count: 0
+    gizmoColor: {r: 0, g: 0, b: 0, a: 0}
+  dispersedStaticCount: 0
+  dispersedBuoyantCount: 0
+  spawnAreaSize: {x: 500, y: 500}
   overlapCheckRadius: 1
   maxSpawnAttemptsPerObstacle: 10
   jitterRange: 0.5
@@ -1091,22 +1141,32 @@ MonoBehaviour:
   - {fileID: 3866911150615150090, guid: ffc03121a9bfce64d8271a2282d51e93, type: 3}
   clusters:
   - name: a
-    center: {x: 30, y: 0, z: 20}
+    center: {x: 15, y: 0, z: 15}
     radius: 20
-    count: 1000
+    count: 1500
     gizmoColor: {r: 1, g: 0, b: 0, a: 1}
   - name: b
-    center: {x: -20, y: 0, z: 15}
-    radius: 7
-    count: 1000
+    center: {x: -20, y: 0, z: 35}
+    radius: 10
+    count: 600
     gizmoColor: {r: 0.015955925, g: 0, b: 1, a: 1}
   - name: c
-    center: {x: -10, y: 0, z: 0}
-    radius: 4
+    center: {x: -30, y: 0, z: -20}
+    radius: 15
     count: 1000
     gizmoColor: {r: 0, g: 1, b: 0.35022616, a: 1}
+  - name: d
+    center: {x: 40, y: 0, z: 40}
+    radius: 10
+    count: 200
+    gizmoColor: {r: 0, g: 1, b: 0.35022616, a: 1}
+  - name: e
+    center: {x: -40, y: 0, z: 40}
+    radius: 5
+    count: 500
+    gizmoColor: {r: 0, g: 1, b: 0.35022616, a: 1}
   dispersedTrashCount: 0
-  spawnAreaSize: {x: 100, y: 100}
+  spawnAreaSize: {x: 500, y: 500}
   overlapCheckRadius: 0
   maxSpawnAttemptsPerTrash: 100
   clusterJitterRange: 0.5
@@ -1653,7 +1713,7 @@ MonoBehaviour:
   obstacleLayer:
     serializedVersion: 2
     m_Bits: 8
-  algorithmName: Greedy
+  algorithmName: Fusion
   clusterArrivalThreshold: 0.8
 --- !u!114 &2135266547
 MonoBehaviour:
