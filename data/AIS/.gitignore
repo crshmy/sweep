@@ -1,0 +1,3 @@
+# AIS 폴더 내용은 제외하고, 폴더 자체는 유지
+data/AIS/*
+!data/AIS/.gitkeep
