@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2021년 해저쓰레기 조사 - 전체 데이터</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+        .map-container {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 15px;
+            height: 800px;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-height: 800px;
+            overflow-y: auto;
+        }
+        .info-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .info-card h3 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .survey-point {
+            background: white;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+            font-size: 13px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        .survey-point:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .survey-point.active {
+            border-left-color: #e74c3c;
+            background: #fff5f5;
+        }
+        .survey-point .date {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        .survey-point .location {
+            color: #7f8c8d;
+            font-size: 12px;
+        }
+        .survey-point .data {
+            margin-top: 5px;
+            color: #e74c3c;
+            font-weight: 600;
+        }
+        .legend {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        .summary .stat {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .summary .label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .leaflet-popup-content-wrapper {
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+        .leaflet-popup-content {
+            margin: 15px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .popup-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #3498db;
+        }
+        .popup-row {
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        .popup-label {
+            color: #7f8c8d;
+            font-weight: 500;
+        }
+        .popup-value {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        
+        @media (max-width: 1024px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+            .map-container {
+                height: 500px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌊 2021年度 海底ごみ調査 全データ</h1>
+            <p class="subtitle">일본 환경성 조사 - 동중국해·일고연안 해저쓰레기 분포 현황</p>
+        </div>
+        
+        <div class="content">
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+            
+            <div class="sidebar">
+                <div class="summary">
+                    <div class="label">총 조사 지점</div>
+                    <div class="stat">26개</div>
+                    <div class="label">조사 기간: 2021년 5-11월</div>
+                </div>
+                
+                <div class="info-card">
+                    <h3>📍 조사 지점 상세</h3>
+                    <div id="point-list"></div>
+                </div>
+                
+                <div class="info-card">
+                    <h3>🎨 범례</h3>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #e74c3c;"></div>
+                            <span>동중국해 (East China Sea)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #3498db;"></div>
+                            <span>일고연안 (Hidaka offshore)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #f39c12;"></div>
+                            <span>기타 해역</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const surveyData = [
+            // 동중국해 - 해응환
+            {ship: '해응환', date: '2021-07-17', lat: 31.497, lon: 127.699, depth: 135, items: 2, weight: '6.4g', region: 'east_china'},
+            {ship: '해응환', date: '2021-07-17', lat: 31.415, lon: 127.710, depth: 135, items: 0, weight: '0g', region: 'east_china'},
+            // 동중국해 - 신응환
+            {ship: '신응환', date: '2021-07-18', lat: 31.182, lon: 127.385, depth: 116, items: 1, weight: '338.4g', region: 'east_china'},
+            {ship: '신응환', date: '2021-07-18', lat: 31.279, lon: 127.307, depth: 112, items: 7, weight: '577.8g', region: 'east_china'},
+            {ship: '신응환', date: '2021-08-25', lat: 31.283, lon: 127.680, depth: 137, items: 1, weight: '596.5g', region: 'east_china'},
+            {ship: '신응환', date: '2021-08-25', lat: 31.464, lon: 127.521, depth: 132, items: 14, weight: '111.2g', region: 'east_china'},
+            // 동중국해 - 장기환
+            {ship: '장기환', date: '2021-05-26', lat: 31.850, lon: 127.818, depth: 149, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '장기환', date: '2021-05-26', lat: 31.833, lon: 127.825, depth: 145, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '장기환', date: '2021-08-11', lat: 31.829, lon: 127.852, depth: 147, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '장기환', date: '2021-08-19', lat: 31.825, lon: 127.657, depth: 140, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '장기환', date: '2021-08-30', lat: 31.833, lon: 127.587, depth: 133, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '장기환', date: '2021-09-06', lat: 31.848, lon: 127.747, depth: 142, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '장기환', date: '2021-09-21', lat: 31.851, lon: 127.963, depth: 151, items: 0, weight: '0g', region: 'east_china'},
+            // 동중국해 - 카고시마환
+            {ship: '카고시마환', date: '2021-09-23', lat: 31.087, lon: 127.938, depth: 151, items: 1, weight: '35g', region: 'east_china'},
+            {ship: '카고시마환', date: '2021-10-18', lat: 31.447, lon: 127.899, depth: 142, items: 1, weight: '0.5g', region: 'east_china'},
+            {ship: '카고시마환', date: '2021-10-18', lat: 31.419, lon: 127.906, depth: 141, items: 0, weight: '0g', region: 'east_china'},
+            {ship: '카고시마환', date: '2021-10-24', lat: 31.817, lon: 127.785, depth: 143, items: 1, weight: '4100g', region: 'east_china'},
+            {ship: '카고시마환', date: '2021-11-28', lat: 31.787, lon: 127.720, depth: 142, items: 2, weight: '102.1g', region: 'east_china'},
+            {ship: '카고시마환', date: '2021-11-28', lat: 31.731, lon: 127.843, depth: 148, items: 0, weight: '0g', region: 'east_china'},
+            // 일고연안
+            {ship: '오쇼로마루', date: '2021-11-24', lat: 42.212, lon: 141.683, depth: 690, items: 882, weight: '4236g', region: 'hidaka'},
+            {ship: '오쇼로마루', date: '2021-11-24', lat: 42.210, lon: 141.650, depth: 675, items: 176, weight: '3020g', region: 'hidaka'},
+            // 기타 해역 (비임트롤)
+            {ship: '장기환(BT)', date: '2021-05-28', lat: 32.930, lon: 133.778, depth: 1051, items: 9, weight: '83.8g', region: 'other'},
+            {ship: '장기환(BT)', date: '2021-06-01', lat: 41.407, lon: 141.867, depth: 1016, items: 6, weight: '18.7g', region: 'other'},
+            {ship: '장기환(BT)', date: '2021-06-02', lat: 39.622, lon: 138.580, depth: 2033, items: 10, weight: '38.6g', region: 'other'},
+            {ship: '장기환(BT)', date: '2021-06-25', lat: 27.838, lon: 125.843, depth: 117, items: 1, weight: '3.1g', region: 'other'},
+            {ship: '장기환(BT)', date: '2021-10-11', lat: 35.203, lon: 131.947, depth: 132, items: 10, weight: '8.7g', region: 'other'},
+        ];
+
+        function getColor(region) {
+            if (region === 'east_china') return '#e74c3c';
+            if (region === 'hidaka') return '#3498db';
+            return '#f39c12';
+        }
+
+        function getMarkerSize(items) {
+            if (items === 0) return 8;
+            if (items < 10) return 12;
+            if (items < 100) return 16;
+            return 20;
+        }
+
+        // 지도 초기화 - 동중국해와 일고연안을 모두 볼 수 있도록
+        const map = L.map('map').setView([35.0, 135.0], 5);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 18,
+        }).addTo(map);
+
+        const markers = [];
+        const pointElements = [];
+
+        surveyData.forEach((point, idx) => {
+            const color = getColor(point.region);
+            const size = getMarkerSize(point.items);
+            
+            const customIcon = L.divIcon({
+                className: 'custom-marker',
+                html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [size, size],
+                iconAnchor: [size/2, size/2]
+            });
+
+            const marker = L.marker([point.lat, point.lon], { icon: customIcon })
+                .addTo(map);
+
+            const popupContent = `
+                <div class="popup-title">${point.ship} - ${point.date}</div>
+                <div class="popup-row">
+                    <span class="popup-label">위치:</span>
+                    <span class="popup-value">${point.lat.toFixed(3)}°N, ${point.lon.toFixed(3)}°E</span>
+                </div>
+                <div class="popup-row">
+                    <span class="popup-label">수심:</span>
+                    <span class="popup-value">${point.depth}m</span>
+                </div>
+                <div class="popup-row">
+                    <span class="popup-label">쓰레기 개수:</span>
+                    <span class="popup-value" style="color: ${color};">${point.items}개</span>
+                </div>
+                <div class="popup-row">
+                    <span class="popup-label">총 중량:</span>
+                    <span class="popup-value">${point.weight}</span>
+                </div>
+            `;
+
+            marker.bindPopup(popupContent, {
+                maxWidth: 300,
+                className: 'custom-popup'
+            });
+
+            markers.push(marker);
+
+            marker.on('click', () => {
+                highlightPoint(idx);
+            });
+        });
+
+        // 사이드바 목록 생성
+        const pointList = document.getElementById('point-list');
+        surveyData.forEach((point, idx) => {
+            const div = document.createElement('div');
+            div.className = 'survey-point';
+            div.style.borderLeftColor = getColor(point.region);
+            div.innerHTML = `
+                <div class="date">${point.date} | ${point.ship}</div>
+                <div class="location">📍 ${point.lat.toFixed(3)}°N, ${point.lon.toFixed(3)}°E (수심: ${point.depth}m)</div>
+                <div class="data">쓰레기: ${point.items}개 (${point.weight})</div>
+            `;
+            
+            div.addEventListener('click', () => {
+                map.setView([point.lat, point.lon], 10, { animate: true });
+                markers[idx].openPopup();
+                highlightPoint(idx);
+            });
+            
+            pointList.appendChild(div);
+            pointElements.push(div);
+        });
+
+        function highlightPoint(index) {
+            pointElements.forEach((el, i) => {
+                if (i === index) {
+                    el.classList.add('active');
+                    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } else {
+                    el.classList.remove('active');
+                }
+            });
+        }
+
+        // 모든 마커가 보이도록 지도 범위 조정
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds().pad(0.1));
+    </script>
+</body>
+</html>

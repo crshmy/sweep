@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>네비게이션 시스템 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #2196f3;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        button {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #1976d2;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 네비게이션 시스템 테스트</h1>
+
+    <div class="test-section">
+        <h2>1. 유틸리티 함수 테스트</h2>
+        <button onclick="testUtilities()">테스트 실행</button>
+        <div id="utils-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. 설정 파일 테스트</h2>
+        <button onclick="testConfig()">테스트 실행</button>
+        <div id="config-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. 거리 계산 테스트</h2>
+        <button onclick="testDistanceCalculation()">테스트 실행</button>
+        <div id="distance-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. API 모의 데이터 테스트</h2>
+        <button onclick="testMockData()">테스트 실행</button>
+        <div id="mockdata-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>5. 지도 초기화 테스트</h2>
+        <button onclick="testMapInitialization()">테스트 실행</button>
+        <div id="map-result"></div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="utils.js"></script>
+
+    <script>
+        // 테스트 결과 표시 함수
+        function showResult(elementId, success, message) {
+            const element = document.getElementById(elementId);
+            const div = document.createElement('div');
+            div.className = `test-result ${success ? 'success' : 'error'}`;
+            div.textContent = success ? '✓ ' + message : '✗ ' + message;
+            element.appendChild(div);
+        }
+
+        // 1. 유틸리티 함수 테스트
+        function testUtilities() {
+            const resultDiv = document.getElementById('utils-result');
+            resultDiv.innerHTML = '';
+
+            try {
+                // 거리 계산 테스트
+                const dist = calculateDistance([35.1796, 129.0756], [35.2, 129.15]);
+                showResult('utils-result', dist > 0, `거리 계산: ${dist.toFixed(2)} km`);
+
+                // 방향 계산 테스트
+                const bearing = calculateBearing([35.1796, 129.0756], [35.2, 129.15]);
+                showResult('utils-result', bearing >= 0 && bearing <= 360, `방향 계산: ${bearing.toFixed(2)}°`);
+
+                // 방위 변환 테스트
+                const direction = degreesToDirection(bearing);
+                showResult('utils-result', direction.length > 0, `방위: ${direction}`);
+
+                // 속도 변환 테스트
+                const speed = convertSpeed(10);
+                showResult('utils-result', speed.kmh > 0, `속도 변환: ${speed.kmh.toFixed(2)} km/h`);
+
+                // ETA 계산 테스트
+                const eta = calculateETA(50, 12);
+                showResult('utils-result', eta.totalMinutes > 0, `ETA: ${eta.formatted}`);
+
+                // 날짜 포맷팅 테스트
+                const formatted = formatDateTime(new Date());
+                showResult('utils-result', formatted.date.length > 0, `날짜 포맷: ${formatted.datetime}`);
+
+                // 좌표 유효성 테스트
+                const valid = isValidCoordinate(35.1796, 129.0756);
+                showResult('utils-result', valid, '좌표 유효성 검증: 통과');
+
+            } catch (error) {
+                showResult('utils-result', false, `에러: ${error.message}`);
+            }
+        }
+
+        // 2. 설정 파일 테스트
+        function testConfig() {
+            const resultDiv = document.getElementById('config-result');
+            resultDiv.innerHTML = '';
+
+            try {
+                // CONFIG 객체 존재 확인
+                showResult('config-result', typeof CONFIG !== 'undefined', 'CONFIG 객체 로드됨');
+
+                // 기본 설정 확인
+                showResult('config-result', CONFIG.app.name.length > 0, `앱 이름: ${CONFIG.app.name}`);
+                showResult('config-result', CONFIG.app.version.length > 0, `버전: ${CONFIG.app.version}`);
+
+                // 지도 설정 확인
+                showResult('config-result', CONFIG.map.defaultCenter.length === 2, 
+                    `기본 좌표: [${CONFIG.map.defaultCenter[0]}, ${CONFIG.map.defaultCenter[1]}]`);
+
+                // 색상 설정 확인
+                showResult('config-result', CONFIG.colors.vessel.length > 0, 
+                    `선박 색상: ${CONFIG.colors.vessel}`);
+
+                // 설정 검증
+                const validated = validateConfig();
+                showResult('config-result', validated, '설정 검증: 성공');
+
+                // 설정 저장/불러오기 테스트
+                const saved = saveConfig();
+                showResult('config-result', saved, '설정 저장: 성공');
+
+                const loaded = loadConfig();
+                showResult('config-result', loaded, '설정 불러오기: 성공');
+
+            } catch (error) {
+                showResult('config-result', false, `에러: ${error.message}`);
+            }
+        }
+
+        // 3. 거리 계산 테스트
+        function testDistanceCalculation() {
+            const resultDiv = document.getElementById('distance-result');
+            resultDiv.innerHTML = '';
+
+            try {
+                // 부산 - 서울 거리 (약 325km)
+                const busan = [35.1796, 129.0756];
+                const seoul = [37.5665, 126.9780];
+                const dist1 = calculateDistance(busan, seoul);
+                showResult('distance-result', dist1 > 300 && dist1 < 350, 
+                    `부산-서울: ${dist1.toFixed(2)} km (예상: ~325km)`);
+
+                // 짧은 거리 테스트
+                const point1 = [35.1796, 129.0756];
+                const point2 = [35.1896, 129.0856];
+                const dist2 = calculateDistance(point1, point2);
+                showResult('distance-result', dist2 < 20, 
+                    `근거리: ${dist2.toFixed(2)} km`);
+
+                // 포맷팅 테스트
+                const formatted1 = formatDistance(0.5);
+                showResult('distance-result', formatted1.includes('m'), 
+                    `미터 표시: ${formatted1}`);
+
+                const formatted2 = formatDistance(5.5);
+                showResult('distance-result', formatted2.includes('km'), 
+                    `킬로미터 표시: ${formatted2}`);
+
+                // 경로 총 거리 계산
+                const route = [
+                    [35.1796, 129.0756],
+                    [35.2, 129.15],
+                    [35.25, 129.2],
+                    [35.15, 129.0]
+                ];
+                const totalDist = calculateTotalRouteDistance(route);
+                showResult('distance-result', totalDist > 0, 
+                    `경로 총 거리: ${totalDist.toFixed(2)} km`);
+
+            } catch (error) {
+                showResult('distance-result', false, `에러: ${error.message}`);
+            }
+        }
+
+        // 4. API 모의 데이터 테스트
+        function testMockData() {
+            const resultDiv = document.getElementById('mockdata-result');
+            resultDiv.innerHTML = '';
+
+            try {
+                // 모의 핫스팟 데이터
+                const mockHotspots = [
+                    { id: 1, name: '테스트 핫스팟', lat: 35.2, lon: 129.15, priority: 'high' }
+                ];
+                showResult('mockdata-result', mockHotspots.length > 0, 
+                    `핫스팟 데이터: ${mockHotspots.length}개`);
+
+                // 모의 AIS 데이터
+                const mockAIS = [
+                    { id: 1, name: '테스트 선박', lat: 35.19, lon: 129.08, speed: '14.2 knots' }
+                ];
+                showResult('mockdata-result', mockAIS.length > 0, 
+                    `AIS 데이터: ${mockAIS.length}개`);
+
+                // 모의 기상 데이터
+                const mockWeather = {
+                    temperature: 23,
+                    windSpeed: 8.5,
+                    waveHeight: 1.2
+                };
+                showResult('mockdata-result', mockWeather.temperature > 0, 
+                    `기상 데이터: ${mockWeather.temperature}°C, 풍속 ${mockWeather.windSpeed}m/s`);
+
+                // 데이터 구조 검증
+                const hotspotValid = mockHotspots[0].hasOwnProperty('lat') && 
+                                   mockHotspots[0].hasOwnProperty('lon');
+                showResult('mockdata-result', hotspotValid, 
+                    '핫스팟 데이터 구조: 유효함');
+
+            } catch (error) {
+                showResult('mockdata-result', false, `에러: ${error.message}`);
+            }
+        }
+
+        // 5. 지도 초기화 테스트
+        function testMapInitialization() {
+            const resultDiv = document.getElementById('map-result');
+            resultDiv.innerHTML = '';
+
+            try {
+                // Leaflet 라이브러리 확인
+                showResult('map-result', typeof L !== 'undefined', 
+                    'Leaflet 라이브러리: 로드됨');
+
+                // 지도 설정 확인
+                showResult('map-result', CONFIG.map.defaultZoom > 0, 
+                    `기본 줌 레벨: ${CONFIG.map.defaultZoom}`);
+
+                showResult('map-result', CONFIG.map.tileLayer.url.length > 0, 
+                    '타일 레이어 URL: 설정됨');
+
+                // 마커 색상 설정 확인
+                const colors = CONFIG.colors.hotspot;
+                showResult('map-result', 
+                    colors.high && colors.medium && colors.low, 
+                    '핫스팟 색상: 설정됨 (고/중/저)');
+
+            } catch (error) {
+                showResult('map-result', false, `에러: ${error.message}`);
+            }
+        }
+
+        // 페이지 로드 시 자동 실행
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('테스트 페이지가 로드되었습니다.');
+            console.log('각 섹션의 "테스트 실행" 버튼을 클릭하여 테스트를 시작하세요.');
+        });
+    </script>
+</body>
+</html>

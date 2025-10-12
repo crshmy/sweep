@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2021년 표층 부유쓰레기 조사 - 전체 데이터</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .content {
+            display: grid;
+            grid-template-columns: 2.5fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+        .map-container {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 15px;
+            height: 850px;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-height: 850px;
+            overflow-y: auto;
+        }
+        .info-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .info-card h3 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .survey-point {
+            background: white;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+            font-size: 12px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        .survey-point:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .survey-point .date {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 3px;
+        }
+        .survey-point .location {
+            color: #7f8c8d;
+            font-size: 11px;
+        }
+        .summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        .summary .stat {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .summary .label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .legend {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        @media (max-width: 1200px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+            .map-container {
+                height: 600px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>2021年度 表層浮遊ごみ目視観測調査 全データ</h1>
+            <p class="subtitle">일본 환경성 조사 - 표층 부유쓰레기 분포 현황 (89개 조사 지점)</p>
+        </div>
+        
+        <div class="content">
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+            
+            <div class="sidebar">
+                <div class="summary">
+                    <div class="label">총 조사 지점</div>
+                    <div class="stat">89개</div>
+                    <div class="label">조사 기간: 2021.7-2022.2</div>
+                </div>
+                
+                <div class="info-card">
+                    <h3>조사 선박</h3>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #e74c3c;"></div>
+                            <span>해응환 Umitaka-maru (21개)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #3498db;"></div>
+                            <span>신응환 Shinyo-maru (32개)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #2ecc71;"></div>
+                            <span>오쇼로마루 Oshoro-maru (5개)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #f39c12;"></div>
+                            <span>카고시마환 Kagoshima-maru (9개)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #9b59b6;"></div>
+                            <span>장기환 Nagasaki-maru (7개)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #1abc9c;"></div>
+                            <span>신응환(2022) Shinyo-maru (5개)</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="info-card">
+                    <h3>조사 지점 목록 (최근순)</h3>
+                    <div id="point-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const surveyData = [
+            {ship: 'Umitaka-maru', date: '2021-07-13', lat: 34.87776, lon: 139.3677, plastic: 0.125, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-14', lat: 33.61915, lon: 136.2443, plastic: 1.878, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-14', lat: 33.2453, lon: 134.6917, plastic: 1.340, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-15', lat: 31.86814, lon: 131.8666, plastic: 0.020, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-15', lat: 31.12581, lon: 131.0105, plastic: 1.173, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-16', lat: 31.65563, lon: 127.8086, plastic: 0.181, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-16', lat: 31.59137, lon: 127.724, plastic: 0.810, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-17', lat: 31.48813, lon: 127.6992, plastic: 0.071, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-18', lat: 33.98374, lon: 130.5004, plastic: 0.052, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-23', lat: 34.96287, lon: 131.2923, plastic: 2.137, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-24', lat: 35.91334, lon: 133.7528, plastic: 1.425, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-24', lat: 36.23041, lon: 135.0374, plastic: 0.129, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-25', lat: 36.9585, lon: 135.8732, plastic: 0.253, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-25', lat: 38.45284, lon: 137.0895, plastic: 1.201, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-26', lat: 38.49168, lon: 137.5524, plastic: 0.261, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-26', lat: 39.37788, lon: 138.4089, plastic: 0.160, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-31', lat: 41.68687, lon: 140.8004, plastic: 0.334, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-07-31', lat: 41.33121, lon: 142.2029, plastic: 0.501, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-08-01', lat: 38.528, lon: 142.1629, plastic: 0.197, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-08-01', lat: 37.32304, lon: 142.5207, plastic: 0.270, region: 'umitaka'},
+            {ship: 'Umitaka-maru', date: '2021-08-02', lat: 35.35196, lon: 142.3727, plastic: 0.060, region: 'umitaka'},
+            
+            {ship: 'Shinyo-maru', date: '2021-07-14', lat: 33.82758, lon: 136.5107, plastic: 0.005, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-14', lat: 33.36007, lon: 135.8479, plastic: 0.019, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-15', lat: 32.55257, lon: 132.9367, plastic: 0.794, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-15', lat: 32.28276, lon: 132.4886, plastic: 0.061, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-17', lat: 31.00282, lon: 130.8121, plastic: 0.316, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-17', lat: 30.93688, lon: 129.9796, plastic: 0.051, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-18', lat: 31.44157, lon: 127.1528, plastic: 0.041, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-19', lat: 32.77624, lon: 129.2471, plastic: 0.442, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-23', lat: 33.12373, lon: 129.5296, plastic: 0.452, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-23', lat: 33.49863, lon: 129.4634, plastic: 1.139, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-24', lat: 33.52296, lon: 131.9367, plastic: 0.389, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-24', lat: 36.15913, lon: 132.4186, plastic: 0.707, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-25', lat: 36.51801, lon: 133.8376, plastic: 0.679, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-25', lat: 36.76852, lon: 134.3735, plastic: 0.542, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-26', lat: 35.89075, lon: 135.2536, plastic: 1.356, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-28', lat: 35.80633, lon: 135.4679, plastic: 1.245, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-28', lat: 36.45841, lon: 135.9497, plastic: 0.473, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-29', lat: 38.70724, lon: 138.1276, plastic: 0.069, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-07-29', lat: 39.34122, lon: 138.6834, plastic: 0.244, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-03', lat: 41.12739, lon: 141.7019, plastic: 0.186, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-04', lat: 38.59276, lon: 141.9764, plastic: 0.949, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-04', lat: 37.91362, lon: 141.6906, plastic: 0.253, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-20', lat: 34.10624, lon: 136.9158, plastic: 0.489, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-20', lat: 33.63107, lon: 136.2555, plastic: 1.501, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-21', lat: 32.7349, lon: 133.2496, plastic: 2.399, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-21', lat: 32.45792, lon: 132.5496, plastic: 0.231, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-24', lat: 31.04898, lon: 130.8722, plastic: 0.452, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-24', lat: 30.93664, lon: 130.2785, plastic: 0.090, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-25', lat: 31.58097, lon: 127.6428, plastic: 0.085, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-26', lat: 33.37755, lon: 128.9717, plastic: 0.397, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-08-26', lat: 33.5273, lon: 129.4078, plastic: 0.477, region: 'shinyo'},
+            {ship: 'Shinyo-maru', date: '2021-09-06', lat: 34.19008, lon: 136.9824, plastic: 0.404, region: 'shinyo'},
+            
+            {ship: 'Oshoro-maru', date: '2021-11-07', lat: 41.87554, lon: 142.5388, plastic: 0.178, region: 'oshoro'},
+            {ship: 'Oshoro-maru', date: '2021-11-08', lat: 42.85152, lon: 144.3005, plastic: 0.191, region: 'oshoro'},
+            {ship: 'Oshoro-maru', date: '2021-11-25', lat: 39.43933, lon: 142.1739, plastic: 0.292, region: 'oshoro'},
+            {ship: 'Oshoro-maru', date: '2021-11-25', lat: 38.44731, lon: 141.6645, plastic: 0.086, region: 'oshoro'},
+            {ship: 'Oshoro-maru', date: '2021-11-27', lat: 41.14609, lon: 141.5476, plastic: 0.081, region: 'oshoro'},
+            
+            {ship: 'Kagoshima-maru', date: '2021-08-26', lat: 28.52633, lon: 131.513, plastic: 1.032, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-08-27', lat: 25.55858, lon: 132.7194, plastic: 0.132, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-08-28', lat: 22.80067, lon: 133.1384, plastic: 0.207, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-08-29', lat: 19.85533, lon: 132.7021, plastic: 0.138, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-08-30', lat: 16.80242, lon: 132.7009, plastic: 1.150, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-09-09', lat: 15.12067, lon: 131.3865, plastic: 0.052, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-09-11', lat: 22.14275, lon: 130.8604, plastic: 0.154, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-09-12', lat: 25.88283, lon: 131.0734, plastic: 0.022, region: 'kagoshima'},
+            {ship: 'Kagoshima-maru', date: '2021-09-13', lat: 28.618, lon: 130.9593, plastic: 1.147, region: 'kagoshima'},
+            
+            {ship: 'Nagasaki-maru', date: '2021-05-30', lat: 35.68834, lon: 141.591, plastic: 0.318, region: 'nagasaki'},
+            {ship: 'Nagasaki-maru', date: '2021-06-02', lat: 40.86358, lon: 139.6017, plastic: 0.417, region: 'nagasaki'},
+            {ship: 'Nagasaki-maru', date: '2021-06-24', lat: 24.49117, lon: 123.4163, plastic: 0.422, region: 'nagasaki'},
+            {ship: 'Nagasaki-maru', date: '2021-06-25', lat: 27.8279, lon: 125.8437, plastic: 0.211, region: 'nagasaki'},
+            {ship: 'Nagasaki-maru', date: '2021-08-11', lat: 31.97203, lon: 127.7596, plastic: 0.649, region: 'nagasaki'},
+            {ship: 'Nagasaki-maru', date: '2021-08-19', lat: 31.98153, lon: 127.6318, plastic: 1.161, region: 'nagasaki'},
+            {ship: 'Nagasaki-maru', date: '2021-08-31', lat: 31.98982, lon: 127.5998, plastic: 1.106, region: 'nagasaki'},
+            
+            {ship: 'Shinyo-maru(2022)', date: '2022-02-04', lat: 34.4112, lon: 137.3318, plastic: 0.003, region: 'shinyo2022'},
+            {ship: 'Shinyo-maru(2022)', date: '2022-02-04', lat: 34.09679, lon: 136.8436, plastic: 0.008, region: 'shinyo2022'},
+            {ship: 'Shinyo-maru(2022)', date: '2022-02-05', lat: 32.89973, lon: 133.5674, plastic: 0.000, region: 'shinyo2022'},
+            {ship: 'Shinyo-maru(2022)', date: '2022-02-06', lat: 33.76333, lon: 136.2181, plastic: 0.016, region: 'shinyo2022'},
+            {ship: 'Shinyo-maru(2022)', date: '2022-02-06', lat: 34.11995, lon: 136.6641, plastic: 0.032, region: 'shinyo2022'}
+        ];
+
+        function getColor(region) {
+            const colors = {
+                'umitaka': '#e74c3c',
+                'shinyo': '#3498db',
+                'oshoro': '#2ecc71',
+                'kagoshima': '#f39c12',
+                'nagasaki': '#9b59b6',
+                'shinyo2022': '#1abc9c'
+            };
+            return colors[region] || '#95a5a6';
+        }
+
+        function getMarkerSize(plastic) {
+            if (plastic === 0) return 6;
+            if (plastic < 0.1) return 8;
+            if (plastic < 0.5) return 10;
+            if (plastic < 1.0) return 14;
+            return 18;
+        }
+
+        const map = L.map('map').setView([35.0, 135.0], 5);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 18,
+        }).addTo(map);
+
+        const markers = [];
+
+        surveyData.forEach((point, idx) => {
+            const color = getColor(point.region);
+            const size = getMarkerSize(point.plastic);
+            
+            const customIcon = L.divIcon({
+                className: 'custom-marker',
+                html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [size, size],
+                iconAnchor: [size/2, size/2]
+            });
+
+            const marker = L.marker([point.lat, point.lon], { icon: customIcon })
+                .addTo(map);
+
+            const popupContent = `
+                <div style="font-size: 14px; font-weight: bold; color: #2c3e50; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid ${color};">
+                    ${point.ship}
+                </div>
+                <div style="margin: 4px 0; display: flex; justify-content: space-between;">
+                    <span style="color: #7f8c8d;">날짜:</span>
+                    <span style="font-weight: 600;">${point.date}</span>
+                </div>
+                <div style="margin: 4px 0; display: flex; justify-content: space-between;">
+                    <span style="color: #7f8c8d;">위치:</span>
+                    <span style="font-weight: 600;">${point.lat.toFixed(3)}°N, ${point.lon.toFixed(3)}°E</span>
+                </div>
+                <div style="margin: 4px 0; display: flex; justify-content: space-between;">
+                    <span style="color: #7f8c8d;">플라스틱:</span>
+                    <span style="font-weight: 600; color: ${color};">${point.plastic.toFixed(3)} 개/km²</span>
+                </div>
+            `;
+
+            marker.bindPopup(popupContent, {
+                maxWidth: 300
+            });
+
+            markers.push(marker);
+        });
+
+        // 사이드바 목록 생성
+        const pointList = document.getElementById('point-list');
+        
+        // 날짜순으로 정렬 (최근순)
+        const sortedData = [...surveyData].sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        sortedData.forEach((point, idx) => {
+            const div = document.createElement('div');
+            div.className = 'survey-point';
+            div.style.borderLeftColor = getColor(point.region);
+            div.innerHTML = `
+                <div class="date">${point.date} | ${point.ship}</div>
+                <div class="location">${point.lat.toFixed(2)}°N, ${point.lon.toFixed(2)}°E | ${point.plastic.toFixed(3)} 개/km²</div>
+            `;
+            
+            div.addEventListener('click', () => {
+                const originalIdx = surveyData.findIndex(p => 
+                    p.date === point.date && p.lat === point.lat && p.lon === point.lon
+                );
+                map.setView([point.lat, point.lon], 9, { animate: true });
+                markers[originalIdx].openPopup();
+            });
+            
+            pointList.appendChild(div);
+        });
+
+        // 모든 마커가 보이도록 지도 범위 조정
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds().pad(0.05));
+    </script>
+</body>
+</html>

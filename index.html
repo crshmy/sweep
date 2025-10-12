@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>대한해협 부유쓰레기 수거 최적화 네비게이션</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 헤더 -->
+        <header class="nav-header">
+            <div class="header-left">
+                <h1>🌊 대한해협 부유쓰레기 수거 네비게이션 <span style="font-size: 14px; color: #4caf50;">● LIVE</span></h1>
+                <div class="vessel-info">
+                    <span class="vessel-name">선박명: 클린오션-1호</span>
+                    <span class="status-indicator active">운항중</span>
+                    <span style="color: #ff9800; margin-left: 15px;">🎣 어선 회피 시스템</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="current-time" id="currentTime"></div>
+                <button class="emergency-btn">긴급</button>
+            </div>
+        </header>
+
+        <!-- 메인 콘텐츠 -->
+        <div class="main-content">
+            <!-- 좌측 사이드바 -->
+            <aside class="left-sidebar">
+                <!-- 현재 위치 정보 -->
+                <section class="info-panel">
+                    <h3>📍 현재 위치</h3>
+                    <div class="location-info">
+                        <div class="info-row">
+                            <span class="label">위도:</span>
+                            <span class="value" id="currentLat">35.1796° N</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">경도:</span>
+                            <span class="value" id="currentLon">129.0756° E</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">속도:</span>
+                            <span class="value" id="currentSpeed">12.0 knots</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">방향:</span>
+                            <span class="value" id="currentHeading">45° NE</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 기상 정보 -->
+                <section class="info-panel weather-panel">
+                    <h3>🌤️ 기상 정보</h3>
+                    <div class="weather-info">
+                        <div class="weather-main">
+                            <div class="weather-icon">☀️</div>
+                            <div class="weather-temp">23°C</div>
+                        </div>
+                        <div class="weather-details">
+                            <div class="info-row">
+                                <span class="label">풍향:</span>
+                                <span class="value" id="windDirection">북동 15°</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">풍속:</span>
+                                <span class="value" id="windSpeed">8.5 m/s</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">파고:</span>
+                                <span class="value" id="waveHeight">1.2 m</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">가시거리:</span>
+                                <span class="value" id="visibility">15 km</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 쓰레기 밀집 예상구역 -->
+                <section class="info-panel hotspot-panel">
+                    <h3>🎯 쓰레기 밀집 예상구역</h3>
+                    <div class="hotspot-list" id="hotspotList">
+                        <!-- 동적으로 생성됨 -->
+                    </div>
+                </section>
+            </aside>
+
+            <!-- 중앙 지도 영역 -->
+            <main class="map-container">
+                <div id="map"></div>
+                
+                <!-- 지도 컨트롤 -->
+                <div class="map-controls">
+                    <button class="control-btn" id="centerBtn" title="현재 위치로">
+                        📍
+                    </button>
+                    <button class="control-btn" id="layerBtn" title="레이어">
+                        🗂️
+                    </button>
+                    <button class="control-btn" id="routeBtn" title="경로 정보">
+                        🛣️
+                    </button>
+                </div>
+
+                <!-- 레이어 토글 패널 -->
+                <div class="layer-panel" id="layerPanel">
+                    <h4>지도 레이어</h4>
+                    <label class="layer-option">
+                        <input type="checkbox" id="aisLayer" checked>
+                        <span>AIS 어선 위치</span>
+                    </label>
+                    <label class="layer-option">
+                        <input type="checkbox" id="hotspotLayer" checked>
+                        <span>쓰레기 밀집구역</span>
+                    </label>
+                    <label class="layer-option">
+                        <input type="checkbox" id="fishingZoneLayer" checked>
+                        <span>🎣 어선 회피구역</span>
+                    </label>
+                </div>
+
+                <!-- 애니메이션 컨트롤 -->
+                <div class="animation-controls">
+                    <div class="status-indicator">
+                        <div class="status-dot"></div>
+                        <span>실시간 추적중</span>
+                    </div>
+                    <div style="width: 2px; height: 30px; background: rgba(255,255,255,0.2);"></div>
+                    <span style="color: white; font-size: 14px;">
+                        선박: <strong id="vesselCount">6</strong>척
+                    </span>
+                    <span style="color: #ff9800; font-size: 14px; margin-left: 10px;">
+                        🎣 회피구역: <strong>3</strong>개
+                    </span>
+                </div>
+            </main>
+
+            <!-- 우측 사이드바 -->
+            <aside class="right-sidebar">
+                <!-- 최적화 경로 정보 -->
+                <section class="info-panel route-panel">
+                    <h3>🛣️ 최적화 경로</h3>
+                    <div class="route-info">
+                        <div class="route-summary">
+                            <div class="summary-item">
+                                <div class="summary-label">총 거리</div>
+                                <div class="summary-value" id="totalDistance">45.2 km</div>
+                            </div>
+                            <div class="summary-item">
+                                <div class="summary-label">예상 시간</div>
+                                <div class="summary-value" id="estimatedTime">3시간 40분</div>
+                            </div>
+                            <div class="summary-item">
+                                <div class="summary-label">밀집구역</div>
+                                <div class="summary-value" id="hotspotCount">5개 지점</div>
+                            </div>
+                        </div>
+                        <button class="optimize-btn" id="optimizeRoute">경로 재계산</button>
+                    </div>
+                </section>
+
+                <!-- 수거 작업 현황 -->
+                <section class="info-panel collection-panel">
+                    <h3>📊 수거 현황</h3>
+                    <div class="collection-stats">
+                        <div class="stat-card">
+                            <div class="stat-icon">🗑️</div>
+                            <div class="stat-content">
+                                <div class="stat-label">오늘 수거량</div>
+                                <div class="stat-value">245 kg</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div class="stat-content">
+                                <div class="stat-label">완료 구역</div>
+                                <div class="stat-value">3 / 8</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">⏱️</div>
+                            <div class="stat-content">
+                                <div class="stat-label">작업 시간</div>
+                                <div class="stat-value">4h 25m</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- AIS 어선 목록 -->
+                <section class="info-panel ais-panel">
+                    <h3>🎣 주변 어선 (AIS)</h3>
+                    <div class="ais-list" id="aisList">
+                        <!-- 동적으로 생성됨 -->
+                    </div>
+                </section>
+
+                <!-- 알림/경고 -->
+                <section class="info-panel alert-panel">
+                    <h3>⚠️ 알림</h3>
+                    <div class="alert-list" id="alertList">
+                        <!-- 동적으로 생성됨 -->
+                    </div>
+                </section>
+            </aside>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script src="js/app-animated.js"></script>
+    <script src="js/fishing-addon.js"></script>
+</body>
+</html>
