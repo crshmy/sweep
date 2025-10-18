@@ -3,7 +3,7 @@
 
 // 충돌 알림 테스트
 window.testCollision = function() {
-    addCollisionAlert('클린오션-1호', '화물선 OCEAN-1', 1.22);
+    addCollisionAlert('sweep-1호', '화물선 OCEAN-1', 1.22);
     console.log('✅ 충돌 알림 테스트 완료!');
 };
 

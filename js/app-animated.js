@@ -6,14 +6,14 @@ let animationFrame;
 let vessels = []; // 모든 선박 정보
 let trails = {}; // 선박 경로 자취
 
-// 내 선박 초기 위치 및 설정
+// 내 선박 초기 위치 및 설정 (부산항 정박)
 const myVessel = {
     id: 'my-vessel',
     name: '클린오션-1호',
-    position: [35.1796, 129.0756],
-    targetPosition: [35.1796, 129.0756],
-    speed: 12, // knots
-    heading: 45,
+    position: [35.1028, 129.0403], // 부산항 정박
+    targetPosition: [35.1028, 129.0403],
+    speed: 0, // knots (정박 중)
+    heading: 90,
     marker: null,
     route: [], // 이동할 경로
     currentRouteIndex: 0,
@@ -22,169 +22,11 @@ const myVessel = {
     color: '#2196f3'
 };
 
-// 가짜 AIS 선박들 - 각자 다른 경로로 움직임
-const aisVessels = [
-    {
-        id: 'ais-1',
-        name: '화물선 OCEAN-1',
-        type: '화물선',
-        position: [35.19, 129.08],
-        targetPosition: [35.19, 129.08],
-        speed: 14,
-        heading: 125,
-        marker: null,
-        route: [
-            [35.19, 129.08],
-            [35.21, 129.12],
-            [35.23, 129.16],
-            [35.25, 129.14]
-        ],
-        currentRouteIndex: 0,
-        trail: [],
-        maxTrailLength: 30,
-        color: '#64b5f6'
-    },
-    {
-        id: 'ais-2',
-        name: '어선 해풍호',
-        type: '어선',
-        position: [35.17, 129.1],
-        targetPosition: [35.17, 129.1],
-        speed: 8,
-        heading: 270,
-        marker: null,
-        route: [
-            [35.17, 129.1],
-            [35.16, 129.05],
-            [35.15, 129.02],
-            [35.14, 129.04],
-            [35.15, 129.08]
-        ],
-        currentRouteIndex: 0,
-        trail: [],
-        maxTrailLength: 40,
-        color: '#81c784'
-    },
-    {
-        id: 'ais-3',
-        name: '여객선 부산스타',
-        type: '여객선',
-        position: [35.21, 129.12],
-        targetPosition: [35.21, 129.12],
-        speed: 18,
-        heading: 45,
-        marker: null,
-        route: [
-            [35.21, 129.12],
-            [35.24, 129.18],
-            [35.27, 129.22],
-            [35.22, 129.25]
-        ],
-        currentRouteIndex: 0,
-        trail: [],
-        maxTrailLength: 25,
-        color: '#ff9800'
-    },
-    {
-        id: 'ais-4',
-        name: '유조선 SEA KING',
-        type: '유조선',
-        position: [35.13, 129.15],
-        targetPosition: [35.13, 129.15],
-        speed: 10,
-        heading: 180,
-        marker: null,
-        route: [
-            [35.13, 129.15],
-            [35.11, 129.13],
-            [35.09, 129.11],
-            [35.08, 129.08]
-        ],
-        currentRouteIndex: 0,
-        trail: [],
-        maxTrailLength: 35,
-        color: '#e91e63'
-    },
-    {
-        id: 'ais-5',
-        name: '컨테이너선 BLUE WAVE',
-        type: '컨테이너선',
-        position: [35.25, 129.05],
-        targetPosition: [35.25, 129.05],
-        speed: 16,
-        heading: 90,
-        marker: null,
-        route: [
-            [35.25, 129.05],
-            [35.26, 129.12],
-            [35.27, 129.18],
-            [35.28, 129.22]
-        ],
-        currentRouteIndex: 0,
-        trail: [],
-        maxTrailLength: 28,
-        color: '#9c27b0'
-    }
-];
+// 가짜 AIS 선박들 - 제거됨 (실제 어선 데이터만 사용)
+const aisVessels = [];
 
-// 쓰레기 핫스팟 데이터
-const hotspots = [
-    {
-        id: 1,
-        name: "동해 핫스팟 A",
-        lat: 35.2,
-        lon: 129.15,
-        priority: "high",
-        estimatedWaste: "대량 (500kg 이상)",
-        type: "플라스틱, 스티로폼",
-        marker: null,
-        pulseAnimation: null
-    },
-    {
-        id: 2,
-        name: "남해 핫스팟 B",
-        lat: 35.15,
-        lon: 129.0,
-        priority: "medium",
-        estimatedWaste: "중간 (200-500kg)",
-        type: "어망, 부표",
-        marker: null,
-        pulseAnimation: null
-    },
-    {
-        id: 3,
-        name: "연안 핫스팟 C",
-        lat: 35.1,
-        lon: 129.1,
-        priority: "low",
-        estimatedWaste: "소량 (200kg 이하)",
-        type: "생활쓰레기",
-        marker: null,
-        pulseAnimation: null
-    },
-    {
-        id: 4,
-        name: "외해 핫스팟 D",
-        lat: 35.25,
-        lon: 129.2,
-        priority: "high",
-        estimatedWaste: "대량 (500kg 이상)",
-        type: "폐목재, 플라스틱",
-        marker: null,
-        pulseAnimation: null
-    },
-    {
-        id: 5,
-        name: "근해 핫스팟 E",
-        lat: 35.12,
-        lon: 129.05,
-        priority: "medium",
-        estimatedWaste: "중간 (200-500kg)",
-        type: "폐타이어, 어구",
-        marker: null,
-        pulseAnimation: null
-    }
-];
+// 쓰레기 핫스팟 데이터 - 제거됨
+const hotspots = [];
 
 // 초기화
 document.addEventListener('DOMContentLoaded', () => {
@@ -195,28 +37,21 @@ document.addEventListener('DOMContentLoaded', () => {
     initAlerts();
     initEventListeners();
     
-    // 내 선박 경로 설정 (핫스팟 순회)
-    myVessel.route = [
-        myVessel.position,
-        [35.2, 129.15],  // 핫스팟 1
-        [35.25, 129.2],  // 핫스팟 4
-        [35.15, 129.0],  // 핫스팟 2
-        [35.12, 129.05], // 핫스팟 5
-        [35.1, 129.1],   // 핫스팟 3
-        myVessel.position
-    ];
+    // 내 선박 경로 - 제거됨 (고정 위치)
+    myVessel.route = [myVessel.position];
     
-    vessels = [myVessel, ...aisVessels];
+    vessels = [myVessel];
     
     // 애니메이션 시작!
     startAnimation();
     
-    console.log('🚢 애니메이션 시작! 선박들이 움직입니다!');
+    console.log('🚢 초기화 완료! 실제 어선 데이터만 표시');
 });
 
 // 지도 초기화
 function initMap() {
-    map = L.map('map').setView(myVessel.position, 11);
+    // 부산항(파란점)이 위쪽 중앙에 오도록
+    map = L.map('map').setView([35.05, 129.05], 11);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',

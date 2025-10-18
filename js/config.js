@@ -5,7 +5,7 @@ const CONFIG = {
     app: {
         name: '해양쓰레기 수거 네비게이션',
         version: '1.0.0',
-        defaultVesselName: '클린오션-1호'
+        defaultVesselName: 'sweep-1호'
     },
 
     // 지도 설정

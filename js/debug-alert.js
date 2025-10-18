@@ -82,7 +82,7 @@ setTimeout(() => {
 // 5단계: 수동 테스트 함수
 window.testAlert = function() {
     console.log('🔧 [DEBUG] 수동 테스트 시작!');
-    addCollisionAlertDebug('클린오션-1호', '화물선 OCEAN-1', 1.23);
+    addCollisionAlertDebug('sweep-1호', '화물선 OCEAN-1', 1.23);
 };
 
 console.log('✅ [DEBUG] 디버깅 스크립트 로드 완료!');

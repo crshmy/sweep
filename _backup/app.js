@@ -149,7 +149,7 @@ function initMap() {
 
     markers.vessel = L.marker(currentPosition, { icon: vesselIcon })
         .addTo(map)
-        .bindPopup('<b>클린오션-1호</b><br>현재 위치');
+        .bindPopup('<b>sweep-1호</b><br>현재 위치');
 
     // 핫스팟 마커 추가
     addHotspotMarkers();
