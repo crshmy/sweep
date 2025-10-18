@@ -1,0 +1,50 @@
+/* 어선 관련 패널들을 우측으로 최소화 */
+.fishing-risk-controls,
+.vessel-animation-controls {
+    position: fixed !important;
+    right: 80px !important;
+    top: 80px !important;
+    left: auto !important;
+    min-width: 60px !important;
+    padding: 10px !important;
+}
+
+/* 패널 축소 상태 */
+.panel-minimized .fishing-risk-controls > div,
+.panel-minimized .vessel-animation-controls > div {
+    display: none;
+}
+
+/* 우측 간단 버튼 스타일 */
+.layer-toggle-compact {
+    position: fixed;
+    right: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    padding: 10px;
+    z-index: 2000;
+}
+
+.layer-toggle-compact button {
+    display: block;
+    width: 50px;
+    height: 50px;
+    margin: 5px 0;
+    background: white;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    font-size: 24px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.layer-toggle-compact button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.layer-toggle-compact button.active {
+    border-color: #4CAF50;
+    background: #f0f9f0;
+}

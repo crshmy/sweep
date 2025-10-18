@@ -1,0 +1,44 @@
+/* 어선 애니메이션 컨트롤 스타일 */
+.vessel-animation-controls {
+    position: fixed;
+    top: 100px;
+    right: 380px;
+    z-index: 1000;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.vessel-animation-controls h4 {
+    margin: 0 0 10px 0;
+    color: #1e90ff;
+    font-size: 16px;
+}
+
+.vessel-animation-controls button {
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.vessel-animation-controls button:hover {
+    background: #45a049;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.vessel-animation-controls button:active {
+    transform: translateY(0);
+}
+
+.vessel-animation-controls input[type="range"] {
+    cursor: pointer;
+}
+
+.vessel-animation-controls #timeDisplay,
+.vessel-animation-controls #progressDisplay {
+    color: #333;
+    margin: 3px 0;
+}

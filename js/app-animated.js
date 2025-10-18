@@ -446,12 +446,12 @@ function checkCollisions() {
 }
 
 // 충돌 경고 표시
-let lastWarningTime = 0;
+let collisionWarningTime = 0; // 이름 변경
 function showCollisionWarning(vessel1, vessel2, distance) {
     const now = Date.now();
-    if (now - lastWarningTime < 5000) return; // 5초에 한 번만
+    if (now - collisionWarningTime < 5000) return; // 5초에 한 번만
     
-    lastWarningTime = now;
+    collisionWarningTime = now;
     
     // 마커 깜빡임 효과
     if (vessel1.marker) {
@@ -467,6 +467,89 @@ function showCollisionWarning(vessel1, vessel2, distance) {
     }
     
     console.warn(`⚠️ 충돌 주의! ${vessel1.name}와 ${vessel2.name} 거리: ${distance.toFixed(2)}km`);
+    
+    // UI에 알림 추가 - 즉시 실행
+    setTimeout(() => {
+        const alertList = document.getElementById('alertList');
+        if (!alertList) {
+            console.error('❌ alertList를 찾을 수 없습니다!');
+            return;
+        }
+        
+        const item = document.createElement('div');
+        item.className = 'alert-item warning alert-slide-in';
+        item.style.animation = 'alert-slide 0.3s ease-out';
+        item.innerHTML = `
+            <div class="alert-icon">⚠️</div>
+            <div class="alert-content">
+                <div class="alert-title">실시간 충돌 감지!</div>
+                <div class="alert-message">${vessel1.name}와 ${vessel2.name}<br>거리: ${distance.toFixed(2)}km</div>
+                <div class="alert-time">방금 전</div>
+            </div>
+        `;
+        
+        // 맨 위에 추가
+        alertList.insertBefore(item, alertList.firstChild);
+        console.log('✅ 충돌 알림 UI에 추가됨!');
+        
+        // 스크롤 맨 위로
+        alertList.scrollTop = 0;
+        
+        // 최대 5개만 유지
+        while (alertList.children.length > 5) {
+            alertList.removeChild(alertList.lastChild);
+        }
+    }, 100); // 100ms 지연
+}
+
+// 충돌 알림 UI 추가 함수
+function addCollisionAlert(vessel1Name, vessel2Name, distance) {
+    const alertList = document.getElementById('alertList');
+    if (!alertList) return;
+    
+    const item = document.createElement('div');
+    item.className = 'alert-item warning alert-slide-in';
+    item.innerHTML = `
+        <div class="alert-icon">⚠️</div>
+        <div class="alert-content">
+            <div class="alert-title">충돌 주의!</div>
+            <div class="alert-message">${vessel1Name}와 ${vessel2Name}<br>거리: ${distance.toFixed(2)}km</div>
+            <div class="alert-time">방금 전</div>
+        </div>
+    `;
+    
+    // 맨 위에 추가
+    alertList.insertBefore(item, alertList.firstChild);
+    
+    // 최대 5개만 유지
+    while (alertList.children.length > 5) {
+        alertList.removeChild(alertList.lastChild);
+    }
+}
+
+// 충돌 알림 UI 추가 함수
+function addCollisionAlert(vessel1Name, vessel2Name, distance) {
+    const alertList = document.getElementById('alertList');
+    if (!alertList) return;
+    
+    const item = document.createElement('div');
+    item.className = 'alert-item warning alert-slide-in';
+    item.innerHTML = `
+        <div class="alert-icon">⚠️</div>
+        <div class="alert-content">
+            <div class="alert-title">충돌 주의!</div>
+            <div class="alert-message">${vessel1Name}와 ${vessel2Name}<br>거리: ${distance.toFixed(2)}km</div>
+            <div class="alert-time">방금 전</div>
+        </div>
+    `;
+    
+    // 맨 위에 추가
+    alertList.insertBefore(item, alertList.firstChild);
+    
+    // 최대 5개만 유지
+    while (alertList.children.length > 5) {
+        alertList.removeChild(alertList.lastChild);
+    }
 }
 
 // 유틸리티 함수들
@@ -626,7 +709,7 @@ function initAlerts() {
     ];
 
     const alertList = document.getElementById('alertList');
-    alertList.innerHTML = '';
+    alertList.innerHTML = ''; // 초기화만 하고
 
     alerts.forEach(alert => {
         const item = document.createElement('div');
@@ -692,3 +775,61 @@ function showRouteInfo() {
     
     alert(`🛣️ 경로 정보\n\n총 거리: ${totalDistance.toFixed(1)} km\n예상 시간: ${hours}시간 ${minutes}분\n핫스팟: ${hotspots.length}개 지점\n현재 속도: ${myVessel.speed} knots`);
 }
+
+// 🔥 충돌 알림 강제 패치 - 파일 끝에 추가
+console.log('🔥 충돌 알림 시스템 패치 시작...');
+
+setTimeout(() => {
+    console.log('✅ 3초 후 충돌 감지 시스템 활성화...');
+    
+    // checkCollisions 함수를 완전히 교체
+    let collisionAlertTime = 0; // 다른 이름 사용
+    
+    checkCollisions = function() {
+        const warningDistance = 2;
+        
+        for (let i = 0; i < vessels.length; i++) {
+            for (let j = i + 1; j < vessels.length; j++) {
+                const distance = calculateDistance(vessels[i].position, vessels[j].position);
+                
+                if (distance < warningDistance) {
+                    const now = Date.now();
+                    if (now - collisionAlertTime > 5000) {
+                        collisionAlertTime = now;
+                        
+                        console.log(`⚠️ 충돌 감지! ${vessels[i].name} vs ${vessels[j].name}, 거리: ${distance.toFixed(2)}km`);
+                        
+                        // UI에 알림 추가
+                        try {
+                            const alertList = document.getElementById('alertList');
+                            if (alertList) {
+                                const item = document.createElement('div');
+                                item.style.cssText = 'background: rgba(255, 152, 0, 0.2); border-left: 4px solid #ff9800; padding: 12px; margin-bottom: 10px; border-radius: 8px; display: flex; gap: 10px; animation: alert-slide 0.3s ease-out;';
+                                item.innerHTML = `
+                                    <div style="font-size: 20px;">⚠️</div>
+                                    <div style="flex: 1;">
+                                        <div style="font-weight: bold; color: #fff; margin-bottom: 4px;">🔴 실시간 충돌 경고!</div>
+                                        <div style="font-size: 13px; color: #b0bec5;">${vessels[i].name}와 ${vessels[j].name}<br>거리: ${distance.toFixed(2)}km</div>
+                                        <div style="font-size: 11px; color: #78909c; margin-top: 4px;">방금 전</div>
+                                    </div>
+                                `;
+                                alertList.insertBefore(item, alertList.firstChild);
+                                alertList.scrollTop = 0;
+                                
+                                console.log('✅ UI에 알림 추가 성공!');
+                                
+                                while (alertList.children.length > 5) {
+                                    alertList.removeChild(alertList.lastChild);
+                                }
+                            }
+                        } catch (error) {
+                            console.error('❌ 알림 추가 실패:', error);
+                        }
+                    }
+                }
+            }
+        }
+    };
+    
+    console.log('✅ 충돌 감지 시스템 활성화 완료!');
+}, 3000);

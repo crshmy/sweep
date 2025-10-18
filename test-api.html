@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌊 기상 API 테스트</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a1929 0%, #1e3a5f 100%);
+            color: #e0e0e0;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #64b5f6;
+            margin-bottom: 30px;
+        }
+        .test-box {
+            background: rgba(30, 41, 54, 0.95);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .test-box h2 {
+            color: #64b5f6;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        input {
+            width: calc(100% - 20px);
+            padding: 10px;
+            border: 2px solid #3d5a80;
+            border-radius: 5px;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        button {
+            background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+            margin-right: 10px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(33, 150, 243, 0.4);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .result {
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .success {
+            color: #4caf50;
+        }
+        .error {
+            color: #f44336;
+        }
+        .info {
+            color: #2196f3;
+        }
+        .warning {
+            color: #ff9800;
+        }
+        .weather-card {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .weather-item {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .weather-item .label {
+            color: #90caf9;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        .weather-item .value {
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .weather-item .icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.loading {
+            background: #ff9800;
+        }
+        .status.ready {
+            background: #4caf50;
+        }
+        .status.failed {
+            background: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌊 OpenWeatherMap API 테스트</h1>
+
+        <!-- API 키 설정 -->
+        <div class="test-box">
+            <h2>1. API 키 설정 <span id="apiStatus" class="status loading">미설정</span></h2>
+            <p>OpenWeatherMap API 키를 입력하세요:</p>
+            <input type="text" id="apiKeyInput" placeholder="예: 1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p">
+            <button onclick="setApiKey()">API 키 저장</button>
+            <div class="result" id="keyResult" style="display: none;"></div>
+        </div>
+
+        <!-- 위치 테스트 -->
+        <div class="test-box">
+            <h2>2. 기상 데이터 조회 테스트</h2>
+            <p>부산 앞바다 기상 정보 가져오기:</p>
+            <button onclick="testWeatherAPI()" id="testBtn" disabled>🌤️ 기상 데이터 조회</button>
+            <div class="result" id="weatherResult" style="display: none;"></div>
+            <div class="weather-card" id="weatherCard" style="display: none;"></div>
+        </div>
+
+        <!-- 다중 지점 테스트 -->
+        <div class="test-box">
+            <h2>3. 다중 지점 샘플링 테스트</h2>
+            <p>여러 위치의 기상 데이터 동시 조회 (시뮬레이션):</p>
+            <button onclick="testMultipleLocations()" id="multiBtn" disabled>🌐 5개 지점 동시 조회</button>
+            <div class="result" id="multiResult" style="display: none;"></div>
+        </div>
+
+        <!-- 파고 계산 테스트 -->
+        <div class="test-box">
+            <h2>4. 파고 추정 알고리즘 테스트</h2>
+            <p>풍속으로부터 파고 계산:</p>
+            <input type="number" id="windInput" placeholder="풍속 (m/s)" value="10" min="0" max="50">
+            <button onclick="calculateWaveHeight()">⚡ 파고 계산</button>
+            <div class="result" id="waveResult" style="display: none;"></div>
+        </div>
+
+        <!-- 연결 테스트 -->
+        <div class="test-box">
+            <h2>5. API 연결 상태 확인</h2>
+            <button onclick="checkConnection()">🔌 연결 테스트</button>
+            <div class="result" id="connResult" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let API_KEY = '';
+        const API_BASE = 'https://api.openweathermap.org/data/2.5';
+
+        // API 키 설정
+        function setApiKey() {
+            const input = document.getElementById('apiKeyInput');
+            API_KEY = input.value.trim();
+            
+            if (!API_KEY) {
+                showResult('keyResult', '❌ API 키를 입력하세요!', 'error');
+                return;
+            }
+            
+            // 로컬 스토리지에 저장
+            localStorage.setItem('owm_api_key', API_KEY);
+            
+            // 상태 업데이트
+            const status = document.getElementById('apiStatus');
+            status.className = 'status ready';
+            status.textContent = '설정 완료';
+            
+            // 버튼 활성화
+            document.getElementById('testBtn').disabled = false;
+            document.getElementById('multiBtn').disabled = false;
+            
+            showResult('keyResult', `✅ API 키가 저장되었습니다!\n키: ${API_KEY.substring(0, 8)}...`, 'success');
+        }
+
+        // 기상 데이터 조회 테스트
+        async function testWeatherAPI() {
+            const btn = document.getElementById('testBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 조회 중...';
+            
+            showResult('weatherResult', '🌐 API 요청 중...', 'info');
+            
+            try {
+                const lat = 35.1796;
+                const lon = 129.0756;
+                
+                const response = await fetch(
+                    `${API_BASE}/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric`
+                );
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                // 결과 표시
+                const resultText = `✅ 성공!\n\n` +
+                    `📍 위치: 부산 앞바다 (${lat}, ${lon})\n` +
+                    `🌡️ 온도: ${data.main.temp}°C\n` +
+                    `🌤️ 날씨: ${data.weather[0].main} (${data.weather[0].description})\n` +
+                    `🌬️ 풍속: ${data.wind.speed} m/s\n` +
+                    `🧭 풍향: ${data.wind.deg}°\n` +
+                    `💧 습도: ${data.main.humidity}%\n` +
+                    `👁️ 가시거리: ${data.visibility / 1000} km\n\n` +
+                    `원본 데이터:\n${JSON.stringify(data, null, 2)}`;
+                
+                showResult('weatherResult', resultText, 'success');
+                
+                // 시각적 카드 표시
+                displayWeatherCard(data);
+                
+            } catch (error) {
+                showResult('weatherResult', 
+                    `❌ 오류 발생!\n\n${error.message}\n\n` +
+                    `가능한 원인:\n` +
+                    `1. API 키가 잘못되었습니다\n` +
+                    `2. API 키가 아직 활성화되지 않았습니다 (최대 2시간 소요)\n` +
+                    `3. 네트워크 연결 문제\n` +
+                    `4. CORS 문제 (로컬 서버로 실행하세요)`,
+                    'error'
+                );
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🌤️ 기상 데이터 조회';
+            }
+        }
+
+        // 기상 카드 표시
+        function displayWeatherCard(data) {
+            const card = document.getElementById('weatherCard');
+            const waveHeight = estimateWaveHeight(data.wind.speed);
+            
+            card.innerHTML = `
+                <div class="weather-item">
+                    <div class="icon">🌡️</div>
+                    <div class="label">온도</div>
+                    <div class="value">${Math.round(data.main.temp)}°C</div>
+                </div>
+                <div class="weather-item">
+                    <div class="icon">🌬️</div>
+                    <div class="label">풍속</div>
+                    <div class="value">${data.wind.speed} m/s</div>
+                </div>
+                <div class="weather-item">
+                    <div class="icon">🧭</div>
+                    <div class="label">풍향</div>
+                    <div class="value">${data.wind.deg}°</div>
+                </div>
+                <div class="weather-item">
+                    <div class="icon">🌊</div>
+                    <div class="label">파고 (추정)</div>
+                    <div class="value">${waveHeight.toFixed(1)} m</div>
+                </div>
+            `;
+            card.style.display = 'grid';
+        }
+
+        // 다중 지점 테스트
+        async function testMultipleLocations() {
+            const btn = document.getElementById('multiBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 조회 중...';
+            
+            showResult('multiResult', '🌐 5개 지점 동시 조회 시작...\n', 'info');
+            
+            const locations = [
+                { name: '부산', lat: 35.18, lon: 129.08 },
+                { name: '거제', lat: 34.88, lon: 128.62 },
+                { name: '통영', lat: 34.85, lon: 128.43 },
+                { name: '여수', lat: 34.76, lon: 127.66 },
+                { name: '제주', lat: 33.51, lon: 126.53 }
+            ];
+            
+            let resultText = '';
+            let successCount = 0;
+            
+            for (const loc of locations) {
+                try {
+                    const response = await fetch(
+                        `${API_BASE}/weather?lat=${loc.lat}&lon=${loc.lon}&appid=${API_KEY}&units=metric`
+                    );
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        resultText += `\n✅ ${loc.name}: ${data.wind.speed} m/s, ${data.main.temp}°C`;
+                        successCount++;
+                    } else {
+                        resultText += `\n❌ ${loc.name}: HTTP ${response.status}`;
+                    }
+                } catch (error) {
+                    resultText += `\n❌ ${loc.name}: ${error.message}`;
+                }
+                
+                // 실시간 업데이트
+                showResult('multiResult', 
+                    `🌐 진행 중... (${successCount}/${locations.length})\n${resultText}`,
+                    successCount === locations.length ? 'success' : 'info'
+                );
+                
+                // API 호출 제한 방지 (0.5초 대기)
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            resultText = `\n📊 결과: ${successCount}/${locations.length} 성공\n${resultText}`;
+            showResult('multiResult', resultText, successCount === locations.length ? 'success' : 'warning');
+            
+            btn.disabled = false;
+            btn.textContent = '🌐 5개 지점 동시 조회';
+        }
+
+        // 파고 계산
+        function calculateWaveHeight() {
+            const windSpeed = parseFloat(document.getElementById('windInput').value);
+            
+            if (isNaN(windSpeed) || windSpeed < 0) {
+                showResult('waveResult', '❌ 올바른 풍속을 입력하세요 (0 이상)', 'error');
+                return;
+            }
+            
+            const waveHeight = estimateWaveHeight(windSpeed);
+            const period = 5 + windSpeed * 0.2;
+            
+            let warning = '';
+            if (waveHeight > 3.0) {
+                warning = '\n\n🚨 위험: 작업 중단 권고!';
+            } else if (waveHeight > 2.0) {
+                warning = '\n\n⚠️ 경고: 높은 파도, 주의 필요';
+            } else if (waveHeight > 1.5) {
+                warning = '\n\n⚠️ 주의: 보통 파도';
+            } else {
+                warning = '\n\n✅ 안전: 작업 가능';
+            }
+            
+            const resultText = 
+                `⚡ 파고 추정 결과\n\n` +
+                `입력 풍속: ${windSpeed} m/s\n` +
+                `추정 파고: ${waveHeight.toFixed(2)} m\n` +
+                `예상 파주기: ${period.toFixed(1)} 초\n` +
+                `\n계산식: H ≈ 0.21 × V^1.5 / 9.8\n` +
+                `(H: 파고, V: 풍속)${warning}`;
+            
+            showResult('waveResult', resultText, waveHeight > 2.5 ? 'error' : 'success');
+        }
+
+        // 연결 테스트
+        async function checkConnection() {
+            showResult('connResult', '🔌 연결 테스트 중...', 'info');
+            
+            const tests = [];
+            
+            // 1. 인터넷 연결
+            tests.push({
+                name: '인터넷 연결',
+                test: async () => {
+                    const response = await fetch('https://www.google.com', { mode: 'no-cors' });
+                    return true;
+                }
+            });
+            
+            // 2. API 서버 연결
+            tests.push({
+                name: 'OpenWeatherMap 서버',
+                test: async () => {
+                    const response = await fetch('https://api.openweathermap.org');
+                    return response.ok;
+                }
+            });
+            
+            // 3. API 키 유효성
+            if (API_KEY) {
+                tests.push({
+                    name: 'API 키 유효성',
+                    test: async () => {
+                        const response = await fetch(
+                            `${API_BASE}/weather?lat=35&lon=129&appid=${API_KEY}`
+                        );
+                        return response.ok;
+                    }
+                });
+            }
+            
+            let resultText = '🔌 연결 테스트 결과:\n\n';
+            
+            for (const test of tests) {
+                try {
+                    const result = await test.test();
+                    resultText += `${result ? '✅' : '❌'} ${test.name}\n`;
+                } catch (error) {
+                    resultText += `❌ ${test.name}: ${error.message}\n`;
+                }
+            }
+            
+            showResult('connResult', resultText, 'info');
+        }
+
+        // 파고 추정 함수
+        function estimateWaveHeight(windSpeed) {
+            return Math.min(0.21 * Math.pow(windSpeed, 1.5) / 9.8, 10);
+        }
+
+        // 결과 표시 헬퍼
+        function showResult(elementId, text, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = text;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+
+        // 페이지 로드 시 저장된 API 키 불러오기
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedKey = localStorage.getItem('owm_api_key');
+            if (savedKey) {
+                document.getElementById('apiKeyInput').value = savedKey;
+                API_KEY = savedKey;
+                
+                const status = document.getElementById('apiStatus');
+                status.className = 'status ready';
+                status.textContent = '설정 완료';
+                
+                document.getElementById('testBtn').disabled = false;
+                document.getElementById('multiBtn').disabled = false;
+                
+                showResult('keyResult', 
+                    `✅ 저장된 API 키를 불러왔습니다!\n키: ${API_KEY.substring(0, 8)}...`,
+                    'success'
+                );
+            }
+        });
+    </script>
+</body>
+</html>
