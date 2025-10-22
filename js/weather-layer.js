@@ -124,7 +124,9 @@ class WeatherLayer {
                     height: this.estimateWaveHeight(windSpeed),
                     period: 5 + windSpeed * 0.2,
                     direction: windDir
-                }
+                },
+                temperature: 23 + Math.sin(lat * 50) * 2,
+                visibility: 15 + Math.cos(lon * 30) * 3
             });
         });
         
@@ -309,7 +311,9 @@ class WeatherLayer {
         
         return this.gridData.get(key) || {
             wind: { speed: this.baseWindSpeed, direction: this.baseWindDir, gust: this.baseWindSpeed * 1.3 },
-            waves: { height: 0.8, period: 6, direction: this.baseWindDir }
+            waves: { height: 0.8, period: 6, direction: this.baseWindDir },
+            temperature: 23,
+            visibility: 15
         };
     }
 

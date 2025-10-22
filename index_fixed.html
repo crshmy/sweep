@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>대한해협 부유쓰레기 수거 최적화 네비게이션</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/animations.css">
+    <link rel="stylesheet" href="css/vessel-animation.css">
+    <link rel="stylesheet" href="css/layer-compact.css">
+</head>
+<body>
+    <!-- 전체 HTML 내용 생략 -->
+    
+    <!-- 🔥 스크립트 로딩 순서 수정! -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.min.js"></script>
+    
+    <script src="js/weather-layer.js"></script>
+    <script src="js/vessel-layer.js"></script>
+    <script src="js/hotspot-layer.js"></script>
+    <script src="js/ais-complexity-layer.js"></script>
+    <script src="js/route-optimizer.js"></script>
+    <!-- app-animated.js가 myVessel 생성 -->
+    <script src="js/app-animated.js"></script>
+    <script src="js/fishing-addon.js"></script>
+    <script src="js/draggable-panels.js"></script>
+    <!-- weather-integration.js는 맨 마지막! (myVessel이 필요함) -->
+    <script src="js/weather-integration.js"></script>
+</body>
+</html>

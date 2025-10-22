@@ -54,9 +54,9 @@ const CONFIG = {
             apiKey: ''
         },
         weather: {
-            enabled: false,
-            endpoint: 'https://your-api.com/weather',
-            apiKey: ''
+            enabled: true,
+            endpoint: 'https://api.openweathermap.org/data/2.5/weather',
+            apiKey: '33751f8e0734dcf6415f5010de776f4b'
         },
         currents: {
             enabled: false,
