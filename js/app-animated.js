@@ -5,11 +5,13 @@ let map;
 let animationFrame;
 let vessels = []; // 모든 선박 정보
 let trails = {}; // 선박 경로 자취
+let vesselLayer; // AIS 복잡도 레이어
+let hotspotLayer; // 쓰레기 밀집구역 레이어
 
 // 내 선박 초기 위치 및 설정 (부산항 정박)
 const myVessel = {
     id: 'my-vessel',
-    name: '클린오션-1호',
+    name: 'sweep-1호',
     position: [35.1028, 129.0403], // 부산항 정박
     targetPosition: [35.1028, 129.0403],
     speed: 0, // knots (정박 중)
@@ -35,6 +37,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initHotspots();
     initAISList();
     initAlerts();
+    initVesselLayer(); // AIS 복잡도 레이어 초기화
+    initHotspotLayer(); // 쓰레기 밀집구역 레이어 초기화
     initEventListeners();
     
     // 내 선박 경로 - 제거됨 (고정 위치)
@@ -588,14 +592,50 @@ function initEventListeners() {
     });
 
     document.getElementById('hotspotLayer').addEventListener('change', (e) => {
-        hotspots.forEach(hotspot => {
-            if (e.target.checked) {
-                hotspot.marker.addTo(map);
-            } else {
-                map.removeLayer(hotspot.marker);
-            }
-        });
+        if (hotspotLayer) {
+            hotspotLayer.toggle();
+        }
     });
+    
+    // AIS 복잡도 레이어 토글
+    document.getElementById('aisComplexityLayer').addEventListener('change', (e) => {
+        if (vesselLayer) {
+            const isActive = vesselLayer.toggle();
+            document.getElementById('aisComplexityStatus').textContent = 
+                isActive ? '활성화' : '비활성화';
+            document.getElementById('aisComplexityStatus').style.color = 
+                isActive ? '#4caf50' : '#ff9800';
+        }
+    });
+}
+
+// AIS 복잡도 레이어 초기화
+async function initVesselLayer() {
+    try {
+        vesselLayer = new VesselLayer(map);
+        await vesselLayer.init();
+        document.getElementById('aisComplexityStatus').textContent = '준비완료';
+        document.getElementById('aisComplexityStatus').style.color = '#4caf50';
+        console.log('✅ AIS 복잡도 레이어 초기화 성공');
+    } catch (error) {
+        console.error('❌ AIS 복잡도 레이어 초기화 실패:', error);
+        document.getElementById('aisComplexityStatus').textContent = '오류';
+        document.getElementById('aisComplexityStatus').style.color = '#f44336';
+    }
+}
+
+// 쓰레기 밀집구역 레이어 초기화
+async function initHotspotLayer() {
+    try {
+        hotspotLayer = new HotspotLayer(map);
+        await hotspotLayer.init();
+        // 기본적으로 활성화
+        hotspotLayer.toggle();
+        document.getElementById('hotspotLayer').checked = true;
+        console.log('✅ 쓰레기 밀집구역 레이어 초기화 성공');
+    } catch (error) {
+        console.error('❌ 쓰레기 밀집구역 레이어 초기화 실패:', error);
+    }
 }
 
 function showRouteInfo() {

@@ -1,0 +1,59 @@
+{
+  "alpha": 0.05,
+  "beta": 0.02,
+  "bins": 140,
+  "grid": {
+    "x_min": -13.09067800238495,
+    "x_max": 0.451239766783554,
+    "y_min": -17.82655521790533,
+    "y_max": 1.0299445138357493
+  },
+  "blocks": 8,
+  "intervals": [
+    {
+      "start": 0,
+      "end": 3,
+      "nonzero": 8
+    },
+    {
+      "start": 3,
+      "end": 6,
+      "nonzero": 2
+    },
+    {
+      "start": 6,
+      "end": 9,
+      "nonzero": 0
+    },
+    {
+      "start": 9,
+      "end": 12,
+      "nonzero": 0
+    },
+    {
+      "start": 12,
+      "end": 15,
+      "nonzero": 0
+    },
+    {
+      "start": 15,
+      "end": 18,
+      "nonzero": 0
+    },
+    {
+      "start": 18,
+      "end": 21,
+      "nonzero": 0
+    },
+    {
+      "start": 21,
+      "end": 24,
+      "nonzero": 0
+    }
+  ],
+  "params": {
+    "MAX_SPEED_EPS": 0.1,
+    "WEIGHT_CLIP": 50.0,
+    "N_SUB": 12
+  }
+}

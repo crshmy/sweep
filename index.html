@@ -58,7 +58,7 @@
                 <div class="vessel-info">
                     <span class="vessel-name">선박명: sweep-1호</span>
                     <span class="status-indicator active">운항중</span>
-                    <span style="color: #ff9800; margin-left: 15px;">🎣 어선 회피 시스템</span>
+                    <span style="color: #ff9800; margin-left: 15px;">🚢 AIS 복잡도 지도</span>
                     <span style="color: #64b5f6; margin-left: 15px;">🌬️ 실시간 기상</span>
                 </div>
             </div>
@@ -168,8 +168,8 @@
                         <span>쓰레기 밀집구역</span>
                     </label>
                     <label class="layer-option">
-                        <input type="checkbox" id="fishingZoneLayer" checked>
-                        <span>🎣 어선 회피구역</span>
+                        <input type="checkbox" id="aisComplexityLayer">
+                        <span>🚢 AIS 복잡도 히트맵</span>
                     </label>
                     <label class="layer-option">
                         <input type="checkbox" id="windLayer">
@@ -221,7 +221,7 @@
                         선박: <strong id="vesselCount">6</strong>척
                     </span>
                     <span style="color: #ff9800; font-size: 14px; margin-left: 10px;">
-                        🎣 회피구역: <strong>3</strong>개
+                        🚢 AIS 복잡도: <strong id="aisComplexityStatus">대기중</strong>
                     </span>
                     <span style="color: #64b5f6; font-size: 14px; margin-left: 10px;" id="weatherStatus">
                         🌬️ 기상 로딩중...
@@ -304,17 +304,24 @@
 
     <!-- 스크립트 로딩 순서 중요! -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    
+    <!-- 🔥 Leaflet.heat 플러그인 (부드러운 히트맵) -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.min.js"></script>
+    
     <script src="js/weather-layer.js"></script>
+    <script src="js/vessel-layer.js"></script>
+    <script src="js/hotspot-layer.js"></script>
+    <script src="js/ais-complexity-layer.js"></script>
     <script src="js/route-optimizer.js"></script>
     <script src="js/app-animated.js"></script>
     <script src="js/fishing-addon.js"></script>
     <script src="js/weather-integration.js"></script>
-    <!-- 어선 위험도 레이어 (AI 기반) -->
-    <script src="js/fishing-risk-layer.js"></script>
-    <!-- vessel-animation.js를 맨 마지막에! -->
-    <script src="js/vessel-animation.js"></script>
-    <!-- 우측 버튼 추가 -->
-    <script src="js/vessel-buttons.js"></script>
+    <!-- 어선 위험도 레이어 (AI 기반) - 임시 비활성화 -->
+    <!-- <script src="js/fishing-risk-layer.js"></script> -->
+    <!-- vessel-animation.js를 맨 마지막에! - 임시 비활성화 -->
+    <!-- <script src="js/vessel-animation.js"></script> -->
+    <!-- 우측 버튼 추가 - 임시 비활성화 -->
+    <!-- <script src="js/vessel-buttons.js"></script> -->
     <!-- 패널 드래그 기능 -->
     <script src="js/draggable-panels.js"></script>
 </body>
