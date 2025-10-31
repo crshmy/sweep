@@ -1,0 +1,2219 @@
+# # -*- coding: utf-8 -*-
+# """
+# daily_step10_test.py (BOM-safe, single-load, 8h time budget)
+# - 입력:
+#     hotspots.json   : {"vessel":{lat,lng,...}, "hotspots":[{lat,lng,weight?}, ...]}
+#     risk_14.geojson : FeatureCollection(Point) with properties incl. "최종위험도"
+# - 출력:
+#     ./results/route_result.json
+#     ./results/route_map.html (레이어 토글 포함, 보라색 Random Trash 기본 숨김)
+# - 주요 기능:
+#     * Geopandas 미사용
+#     * 핫스팟 중심 가우시안 + 일부 균일 랜덤 쓰레기
+#     * 랜덤 쓰레기 → 최근접 핫스팟 질량 귀속
+#     * 핫스팟 접근 시 반경 내 일괄 수거(질량 KPI 반영)
+#     * 위험도 보간 반영
+#     * Chaikin 경로 스무딩
+#     * 콘솔 성능지표 출력
+#     * ✅ 총 운영시간 8시간 고정(운항+수거 합계 28,800초)
+# """
+
+# import os
+# import json
+# import math
+# import random
+# from dataclasses import dataclass
+# from typing import List, Tuple, Optional, Dict
+
+# import numpy as np
+
+# try:
+#     import folium
+# except Exception:
+#     folium = None
+#     print("[WARN] folium 미설치: HTML 지도 출력은 생략됩니다. pip install folium")
+
+# # =========================
+# # 경로/파라미터
+# # =========================
+# HOTSPOT_JSON = "./hotspots.json"
+# RISK_GEOJSON = "./risk_14.geojson"
+# RESULT_DIR = "./results"
+# os.makedirs(RESULT_DIR, exist_ok=True)
+
+# # 선박 속도 (요청: 약 3 km/h)
+# SPEED_KMH = 3.0
+# SPEED_MS = SPEED_KMH * 1000.0 / 3600.0
+
+# # 수거 시간
+# COLLECTION_TIME_PER_HOTSPOT_S = 30.0
+# COLLECTION_TIME_PER_RANDOM_S  = 5.0
+
+# # ✅ 총 운영 시간(운항+수거) 상한: 8시간
+# MAX_OPERATION_TIME_S = 8 * 3600  # 28800 sec
+
+# # 랜덤 쓰레기 생성 파라미터
+# RANDOM_GAUSS_PER_HS = 30
+# RANDOM_UNIFORM_COUNT = 70
+# RANDOM_UNIFORM_FRACTION = 0.2
+# GAUSS_SIGMA_M = 200.0
+
+# # 커버리지 그리드(옵션; KPI 분모 제외)
+# GENERATE_COVER_GRID = False
+# COVER_GRID_SPACING_M = 600.0
+
+# # 일괄 수거 반경
+# CAPTURE_MIN_R_M = 300.0
+# CAPTURE_FACTOR  = 1.5
+
+# # 위험도 필드
+# RISK_NEIGHBOR_R_M = 2500.0
+# RISK_WEIGHT = 0.6
+
+# # 경로 스무딩
+# SMOOTHING_ITER = 2
+# SMOOTHING_T = 0.25
+
+# # 조기 종료 조건(선택)
+# MAX_VISIT = None
+# MAX_TRAVEL_KM = None
+
+# # =========================
+# # 유틸
+# # =========================
+# def load_json_any(fp: str):
+#     """UTF-8 → 실패 시 UTF-8-SIG(BOM)로 재시도"""
+#     if not os.path.isfile(fp):
+#         raise FileNotFoundError(fp)
+#     try:
+#         with open(fp, "r", encoding="utf-8") as f:
+#             return json.load(f)
+#     except json.JSONDecodeError:
+#         # BOM 포함 파일
+#         with open(fp, "r", encoding="utf-8-sig") as f:
+#             return json.load(f)
+
+# def haversine_m(lon1, lat1, lon2, lat2) -> float:
+#     R = 6371000.0
+#     dlon = math.radians(lon2 - lon1)
+#     dlat = math.radians(lat2 - lat1)
+#     a = math.sin(dlat/2.0)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2.0)**2
+#     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+#     return R * c
+
+# def bbox_expand(lons, lats, pad_deg=0.1):
+#     return (min(lons)-pad_deg, min(lats)-pad_deg, max(lons)+pad_deg, max(lats)+pad_deg)
+
+# def random_point_in_bbox(bbox):
+#     minx, miny, maxx, maxy = bbox
+#     return (random.uniform(minx, maxx), random.uniform(miny, maxy))
+
+# def move_by_gaussian(lon, lat, sigma_m=200.0):
+#     dlat = (sigma_m / 111000.0) * np.random.normal()
+#     dlon = (sigma_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))) * np.random.normal()
+#     return lon + dlon, lat + dlat
+
+# def chaikin(points: List[Tuple[float,float]], t=0.25, iterations=1):
+#     if len(points) < 3 or iterations <= 0:
+#         return points[:]
+#     pts = points[:]
+#     for _ in range(iterations):
+#         new_pts = [pts[0]]
+#         for i in range(len(pts)-1):
+#             p0 = np.array(pts[i])
+#             p1 = np.array(pts[i+1])
+#             Q = (1-t)*p0 + t*p1
+#             R = t*p0 + (1-t)*p1
+#             new_pts.extend([tuple(Q), tuple(R)])
+#         new_pts.append(pts[-1])
+#         pts = new_pts
+#     return pts
+
+# # =========================
+# # 데이터 모델
+# # =========================
+# @dataclass
+# class Hotspot:
+#     id: str
+#     lon: float
+#     lat: float
+#     weight: float = 1.0
+#     radius_m: float = 200.0
+#     visited: bool = False
+#     is_random: bool = False
+#     is_cover: bool = False
+#     mass: float = 1.0
+#     collected_mass: float = 0.0
+
+# @dataclass
+# class TrashPoint:
+#     lon: float
+#     lat: float
+#     weight: float = 1.0
+#     is_cover: bool = False
+#     visited: bool = False
+
+# # =========================
+# # 로더
+# # =========================
+# def load_hotspots(fp: str) -> Tuple[List[Hotspot], Tuple[float,float]]:
+#     raw = load_json_any(fp)
+
+#     vessel = raw.get("vessel", {})
+#     start_lat = vessel.get("lat", None)
+#     start_lon = vessel.get("lng", vessel.get("lon", None))
+
+#     hs_list: List[Hotspot] = []
+#     hs_raw = raw.get("hotspots", [])
+#     for i, rec in enumerate(hs_raw):
+#         lat = rec.get("lat")
+#         lon = rec.get("lng", rec.get("lon"))
+#         if lat is None or lon is None:
+#             print(f"[hotspots] WARN: hotspot #{i} missing lat/lon → skip")
+#             continue
+#         try:
+#             lat = float(lat); lon = float(lon)
+#         except Exception:
+#             print(f"[hotspots] WARN: hotspot #{i} lat/lon not float → skip")
+#             continue
+#         w = rec.get("weight", 1.0)
+#         try:
+#             w = float(w)
+#         except Exception:
+#             w = 1.0
+#         mass = max(1.0, 5.0 * w)
+#         hs_list.append(Hotspot(id=f"hs_{i}", lon=lon, lat=lat, weight=w, mass=mass))
+
+#     if (start_lat is None or start_lon is None) and hs_list:
+#         start_lat = hs_list[0].lat
+#         start_lon = hs_list[0].lon
+
+#     if not hs_list:
+#         raise ValueError("[hotspots] No valid hotspot records.")
+
+#     print(f"[hotspots] OK: loaded {len(hs_list)} records from {fp}")
+#     return hs_list, (float(start_lon), float(start_lat))
+
+# def load_risk_points(fp: str) -> List[Tuple[float,float,float]]:
+#     try:
+#         gj = load_json_any(fp)
+#     except FileNotFoundError:
+#         print(f"[risk] WARN: file not found: {fp} → risk disabled")
+#         return []
+#     feats = gj.get("features", [])
+#     out = []
+#     for idx, ft in enumerate(feats):
+#         geom = ft.get("geometry", {})
+#         if geom.get("type") != "Point":
+#             continue
+#         coords = geom.get("coordinates", [])
+#         if len(coords) != 2:
+#             continue
+#         lon, lat = coords
+#         try:
+#             lon = float(lon); lat = float(lat)
+#             if math.isnan(lon) or math.isnan(lat):
+#                 print(f"[risk] WARN: feature #{idx} non-float coords → skip")
+#                 continue
+#         except Exception:
+#             print(f"[risk] WARN: feature #{idx} non-float coords → skip")
+#             continue
+#         prop = ft.get("properties", {})
+#         risk = prop.get("최종위험도", prop.get("risk", 0.0))
+#         try:
+#             risk = float(risk)
+#         except Exception:
+#             risk = 0.0
+#         out.append((lon, lat, risk))
+#     print(f"[risk] OK: loaded {len(out)} risk points from {fp}")
+#     return out
+
+# # =========================
+# # 위험도 필드
+# # =========================
+# class RiskField:
+#     def __init__(self, pts: List[Tuple[float,float,float]]):
+#         self.pts = np.array(pts, dtype=float) if pts else np.zeros((0,3), dtype=float)
+#     def risk_at(self, lon: float, lat: float, neigh_r_m: float = RISK_NEIGHBOR_R_M) -> float:
+#         if self.pts.size == 0:
+#             return 0.0
+#         dlat_deg = neigh_r_m / 111000.0
+#         dlon_deg = neigh_r_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))
+#         mask = (
+#             (self.pts[:,0] >= lon - dlon_deg) &
+#             (self.pts[:,0] <= lon + dlon_deg) &
+#             (self.pts[:,1] >= lat - dlat_deg) &
+#             (self.pts[:,1] <= lat + dlat_deg)
+#         )
+#         cand = self.pts[mask]
+#         if cand.size == 0:
+#             return 0.0
+#         dists = np.array([haversine_m(lon, lat, L, A) for L, A, _ in cand], dtype=float)
+#         w = np.exp(-np.clip(dists, 0, neigh_r_m) / max(1.0, 0.35*neigh_r_m))
+#         risks = cand[:,2]
+#         denom = w.sum()
+#         return float((w * risks).sum() / denom) if denom > 0 else float(risks.mean())
+
+# # =========================
+# # 랜덤 쓰레기/커버리지
+# # =========================
+# def generate_random_trash(hotspots: List[Hotspot],
+#                           bbox: Optional[Tuple[float,float,float,float]] = None) -> List[TrashPoint]:
+#     if not hotspots:
+#         return []
+#     hs_lons = [h.lon for h in hotspots]
+#     hs_lats = [h.lat for h in hotspots]
+#     if bbox is None:
+#         bbox = bbox_expand(hs_lons, hs_lats, pad_deg=0.1)
+
+#     pts: List[TrashPoint] = []
+#     # 핫스팟 중심 가우시안
+#     for h in hotspots:
+#         for _ in range(int(RANDOM_GAUSS_PER_HS * (1.0 - RANDOM_UNIFORM_FRACTION))):
+#             lon, lat = move_by_gaussian(h.lon, h.lat, GAUSS_SIGMA_M)
+#             pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+#     # 균일 일부
+#     for _ in range(int(RANDOM_UNIFORM_COUNT * RANDOM_UNIFORM_FRACTION)):
+#         lon, lat = random_point_in_bbox(bbox)
+#         pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+#     return pts
+
+# def generate_coverage_grid(hotspots: List[Hotspot]) -> List[TrashPoint]:
+#     if not GENERATE_COVER_GRID or not hotspots:
+#         return []
+#     lons = [h.lon for h in hotspots]
+#     lats = [h.lat for h in hotspots]
+#     minx, miny, maxx, maxy = bbox_expand(lons, lats, pad_deg=0.05)
+#     dlat = COVER_GRID_SPACING_M / 111000.0
+#     clat = (miny + maxy) / 2.0
+#     dlon = COVER_GRID_SPACING_M / (111000.0 * max(1e-6, math.cos(math.radians(clat))))
+
+#     pts = []
+#     y = miny
+#     while y <= maxy:
+#         x = minx
+#         while x <= maxx:
+#             pts.append(TrashPoint(lon=x, lat=y, weight=1.0, is_cover=True))
+#             x += dlon
+#         y += dlat
+#     return pts
+
+# # =========================
+# # 경로 스코어/선택
+# # =========================
+# def score_hotspot(curr: Tuple[float,float], hs: Hotspot, risk_field: RiskField) -> float:
+#     if hs.visited:
+#         return -1e9
+#     dist = haversine_m(curr[0], curr[1], hs.lon, hs.lat) + 1.0
+#     local_risk = risk_field.risk_at(hs.lon, hs.lat)
+#     importance = 0.4 * hs.weight + 0.6 * hs.mass
+#     cost = dist * (1.0 + RISK_WEIGHT * local_risk)
+#     return importance / cost
+
+# def select_next_target(curr_lon: float, curr_lat: float,
+#                        hotspots: List[Hotspot], risk_field: RiskField) -> Optional[Hotspot]:
+#     best = None
+#     best_s = -1e18
+#     for h in hotspots:
+#         if h.visited:
+#             continue
+#         s = score_hotspot((curr_lon, curr_lat), h, risk_field)
+#         if s > best_s:
+#             best_s = s
+#             best = h
+#     return best
+
+# # =========================
+# # 메인 플래너
+# # =========================
+# def plan_route(start_lon: Optional[float]=None, start_lat: Optional[float]=None) -> Dict:
+#     hotspots, (auto_lon, auto_lat) = load_hotspots(HOTSPOT_JSON)
+#     if start_lon is None or start_lat is None:
+#         start_lon, start_lat = auto_lon, auto_lat
+
+#     risk_pts = load_risk_points(RISK_GEOJSON)
+#     risk_field = RiskField(risk_pts)
+
+#     rand_trash = generate_random_trash(hotspots)
+#     cover_pts  = generate_coverage_grid(hotspots)
+
+#     # 랜덤(커버 제외) → 최근접 핫스팟 질량 귀속
+#     non_cover_random = [t for t in rand_trash if not t.is_cover]
+#     hs_xy = np.array([(h.lon, h.lat) for h in hotspots], dtype=float)
+#     for t in non_cover_random:
+#         d = np.hypot((hs_xy[:,0]-t.lon)*math.cos(math.radians(t.lat))*111000.0,
+#                      (hs_xy[:,1]-t.lat)*111000.0)
+#         j = int(np.argmin(d))
+#         hotspots[j].mass += max(1.0, t.weight * 1.0)
+
+#     route = [(start_lon, start_lat)]
+#     cur_lon, cur_lat = start_lon, start_lat
+#     total_distance_m = 0.0
+#     time_travel_s = 0.0
+#     time_collect_s = 0.0
+#     collision_count = 0
+#     iter_count = 0
+
+#     while True:
+#         # 선택적 하드 컷
+#         if MAX_VISIT is not None and sum(h.visited for h in hotspots) >= MAX_VISIT:
+#             break
+#         if MAX_TRAVEL_KM is not None and (total_distance_m/1000.0) >= MAX_TRAVEL_KM:
+#             break
+#         # ✅ 8시간 시간예산 초과 시 종료
+#         if (time_travel_s + time_collect_s) >= MAX_OPERATION_TIME_S:
+#             break
+
+#         nxt = select_next_target(cur_lon, cur_lat, hotspots, risk_field)
+#         if nxt is None:
+#             break
+
+#         # 다음 이동이 시간예산을 초과하면 중단(옵션): 이동 전 미리 체크
+#         d = haversine_m(cur_lon, cur_lat, nxt.lon, nxt.lat)
+#         travel_incr_s = d / max(1e-6, SPEED_MS)
+#         collect_incr_s = COLLECTION_TIME_PER_HOTSPOT_S
+#         # 랜덤 수거 예상치(대략): 평균 10개 정도로 보수적으로 10*5s 가정 → 초과 방지
+#         # 필요 없으면 제거 가능
+#         # est_random_pick_s = 10 * COLLECTION_TIME_PER_RANDOM_S
+#         # if (time_travel_s + time_collect_s + travel_incr_s + collect_incr_s + est_random_pick_s) > MAX_OPERATION_TIME_S:
+#         #     break
+
+#         total_distance_m += d
+#         time_travel_s += travel_incr_s
+#         route.append((nxt.lon, nxt.lat))
+#         cur_lon, cur_lat = nxt.lon, nxt.lat
+
+#         nxt.visited = True
+#         time_collect_s += collect_incr_s
+#         nxt.collected_mass += 1.0
+
+#         capture_R = max(CAPTURE_MIN_R_M, nxt.radius_m * CAPTURE_FACTOR)
+#         for t in non_cover_random:
+#             if t.visited:
+#                 continue
+#             if haversine_m(nxt.lon, nxt.lat, t.lon, t.lat) <= capture_R:
+#                 # 수거하기 전에 남은 시간 체크(초과 방지)
+#                 if (time_travel_s + time_collect_s + COLLECTION_TIME_PER_RANDOM_S) > MAX_OPERATION_TIME_S:
+#                     break
+#                 t.visited = True
+#                 nxt.collected_mass += max(1.0, t.weight * 1.0)
+#                 time_collect_s += COLLECTION_TIME_PER_RANDOM_S
+
+#         iter_count += 1
+#         if iter_count > 10000:
+#             break
+
+#     # 스무딩
+#     smooth_route = chaikin(route, t=SMOOTHING_T, iterations=SMOOTHING_ITER)
+
+#     # KPI
+#     total_points = len(hotspots) + len(non_cover_random)
+#     collected_points = sum(1 for h in hotspots if h.visited) + sum(1 for t in non_cover_random if t.visited)
+#     point_rate = (collected_points / total_points) if total_points > 0 else 0.0
+
+#     total_mass = sum(h.mass for h in hotspots)
+#     collected_mass = sum(h.collected_mass for h in hotspots)
+#     mass_rate = (collected_mass / total_mass) if total_mass > 0 else 0.0
+
+#     kpi = {
+#         "point_rate": point_rate,
+#         "collected_points": collected_points,
+#         "total_points": total_points,
+#         "mass_rate": mass_rate,
+#         "collected_mass": collected_mass,
+#         "total_mass": total_mass,
+#         "distance_km": total_distance_m / 1000.0,
+#         "travel_time_min": time_travel_s / 60.0,
+#         "collection_time_min": time_collect_s / 60.0,
+#         "total_operation_time_h": (time_travel_s + time_collect_s) / 3600.0,
+#         "time_budget_h": MAX_OPERATION_TIME_S / 3600.0,  # ✅ 표시용
+#         "collision_count": collision_count
+#     }
+
+#     out = {
+#         "start": {"lon": route[0][0], "lat": route[0][1]},
+#         "route": [{"lon": x, "lat": y} for x, y in route],
+#         "route_smooth": [{"lon": x, "lat": y} for x, y in smooth_route],
+#         "hotspots": [h.__dict__ for h in hotspots],
+#         "random_trash": [t.__dict__ for t in non_cover_random],
+#         "cover_pts": [t.__dict__ for t in cover_pts],
+#         "kpi": kpi
+#     }
+#     with open(os.path.join(RESULT_DIR, "route_result.json"), "w", encoding="utf-8") as f:
+#         json.dump(out, f, ensure_ascii=False, indent=2)
+
+#     print_run_summary(kpi)
+
+#     if folium:
+#         save_map_html(smooth_route, hotspots, non_cover_random, risk_pts)
+
+#     return out
+
+# # =========================
+# # 출력 보조
+# # =========================
+# def print_run_summary(kpi: dict):
+#     print("\n=== RUN SUMMARY ===")
+#     print(f"- time budget       : {kpi['time_budget_h']:.2f} h (fixed)")
+#     print(f"- total op time     : {kpi['total_operation_time_h']:.2f} h")
+#     print(f"- distance          : {kpi['distance_km']:.2f} km")
+#     print(f"- travel time       : {kpi['travel_time_min']:.1f} min")
+#     print(f"- collection time   : {kpi['collection_time_min']:.1f} min")
+#     print(f"- point rate (포인트): {kpi['point_rate']*100:.1f}% ({kpi['collected_points']}/{kpi['total_points']})")
+#     print(f"- mass  rate (질량)  : {kpi['mass_rate']*100:.1f}% ({kpi['collected_mass']:.0f}/{kpi['total_mass']:.0f})")
+#     print(f"- collisions        : {kpi['collision_count']}")
+
+# def save_map_html(route_smooth: List[Tuple[float,float]],
+#                   hotspots: List[Hotspot],
+#                   rand_pts: List[TrashPoint],
+#                   risk_pts: List[Tuple[float,float,float]]):
+
+#     clat = float(np.mean([lat for _, lat in route_smooth]))
+#     clon = float(np.mean([lon for lon, _ in route_smooth]))
+#     m = folium.Map(location=[clat, clon], zoom_start=10, tiles="cartodbpositron")
+
+#     # Route
+#     fg_route = folium.FeatureGroup(name="Route (Smooth)", show=True)
+#     folium.PolyLine([(lat, lon) for lon, lat in route_smooth], weight=4).add_to(fg_route)
+#     folium.CircleMarker(location=[route_smooth[0][1], route_smooth[0][0]], radius=6,
+#                         tooltip="Start", fill=True).add_to(fg_route)
+#     fg_route.add_to(m)
+
+#     # Hotspots
+#     fg_hs = folium.FeatureGroup(name="Hotspots", show=True)
+#     for h in hotspots:
+#         color = "#ff0000" if h.visited else "#ff7f00"
+#         folium.CircleMarker([h.lat, h.lon], radius=5, color=color, fill=True,
+#                             tooltip=f"{h.id} | w={h.weight:.1f} | mass={h.mass:.1f} | coll_mass={h.collected_mass:.1f}").add_to(fg_hs)
+#         capture_R = max(CAPTURE_MIN_R_M, h.radius_m * CAPTURE_FACTOR)
+#         folium.Circle([h.lat, h.lon], radius=capture_R, color="#ffaaaa", fill=False, opacity=0.3).add_to(fg_hs)
+#     fg_hs.add_to(m)
+
+#     # Random Trash (보라색, 기본 숨김)
+#     fg_rand = folium.FeatureGroup(name="Random Trash (숨김)", show=False)
+#     for t in rand_pts:
+#         color = "#8000ff" if not t.visited else "#b380ff"
+#         folium.CircleMarker([t.lat, t.lon], radius=3, color=color, fill=True).add_to(fg_rand)
+#     fg_rand.add_to(m)
+
+#     # Risk points (기본 숨김)
+#     if risk_pts:
+#         fg_risk = folium.FeatureGroup(name="Risk points", show=False)
+#         for (lon, lat, rv) in risk_pts:
+#             col = "#ff0000" if rv >= 0.4 else "#ffaa00" if rv >= 0.25 else "#00aa88"
+#             folium.CircleMarker([lat, lon], radius=2.5, color=col, fill=True,
+#                                 tooltip=f"risk={rv:.2f}").add_to(fg_risk)
+#         fg_risk.add_to(m)
+
+#     folium.LayerControl(collapsed=False).add_to(m)
+#     out_html = os.path.join(RESULT_DIR, "route_map.html")
+#     m.save(out_html)
+#     print(f"[map] saved: {out_html}")
+
+# # =========================
+# # 엔트리포인트
+# # =========================
+# if __name__ == "__main__":
+#     # 시작점은 plan_route() 내부에서 hotspots.json의 vessel 또는 첫 핫스팟으로 자동 설정
+#     res = plan_route()
+
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------------------------
+# 에이스타
+
+
+
+# # -*- coding: utf-8 -*-
+# """
+# daily_step10_test.py - 전체 쓰레기 수거 경로 계획
+# - 시간 제약 없이 모든 핫스팟 방문
+# - 출발점: 위도가 가장 높은(북쪽) 핫스팟
+# - Greedy Nearest Neighbor 알고리즘
+# """
+
+# import os
+# import json
+# import math
+# import random
+# from dataclasses import dataclass
+# from typing import List, Tuple, Optional, Dict
+
+# import numpy as np
+
+# try:
+#     import folium
+# except Exception:
+#     folium = None
+#     print("[WARN] folium 미설치: HTML 지도 출력은 생략됩니다. pip install folium")
+
+# # =========================
+# # 경로/파라미터
+# # =========================
+# HOTSPOT_JSON = "./hotspots.json"
+# RISK_GEOJSON = "./risk_14.geojson"
+# RESULT_DIR = "./results"
+# os.makedirs(RESULT_DIR, exist_ok=True)
+
+# # 선박 속도 (요청: 약 3 km/h)
+# SPEED_KMH = 3.0
+# SPEED_MS = SPEED_KMH * 1000.0 / 3600.0
+
+# # 수거 시간
+# COLLECTION_TIME_PER_HOTSPOT_S = 30.0
+# COLLECTION_TIME_PER_RANDOM_S  = 5.0
+
+# # 랜덤 쓰레기 생성 파라미터
+# RANDOM_GAUSS_PER_HS = 30
+# RANDOM_UNIFORM_COUNT = 70
+# RANDOM_UNIFORM_FRACTION = 0.2
+# GAUSS_SIGMA_M = 200.0
+
+# # 일괄 수거 반경
+# CAPTURE_MIN_R_M = 300.0
+# CAPTURE_FACTOR  = 1.5
+
+# # 위험도 필드
+# RISK_NEIGHBOR_R_M = 2500.0
+# RISK_WEIGHT = 0.6
+
+# # 경로 스무딩
+# SMOOTHING_ITER = 2
+# SMOOTHING_T = 0.25
+
+# # =========================
+# # 유틸
+# # =========================
+# def load_json_any(fp: str):
+#     """UTF-8 → 실패 시 UTF-8-SIG(BOM)로 재시도"""
+#     if not os.path.isfile(fp):
+#         raise FileNotFoundError(fp)
+#     try:
+#         with open(fp, "r", encoding="utf-8") as f:
+#             return json.load(f)
+#     except json.JSONDecodeError:
+#         with open(fp, "r", encoding="utf-8-sig") as f:
+#             return json.load(f)
+
+# def haversine_m(lon1, lat1, lon2, lat2) -> float:
+#     R = 6371000.0
+#     dlon = math.radians(lon2 - lon1)
+#     dlat = math.radians(lat2 - lat1)
+#     a = math.sin(dlat/2.0)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2.0)**2
+#     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+#     return R * c
+
+# def bbox_expand(lons, lats, pad_deg=0.1):
+#     return (min(lons)-pad_deg, min(lats)-pad_deg, max(lons)+pad_deg, max(lats)+pad_deg)
+
+# def random_point_in_bbox(bbox):
+#     minx, miny, maxx, maxy = bbox
+#     return (random.uniform(minx, maxx), random.uniform(miny, maxy))
+
+# def move_by_gaussian(lon, lat, sigma_m=200.0):
+#     dlat = (sigma_m / 111000.0) * np.random.normal()
+#     dlon = (sigma_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))) * np.random.normal()
+#     return lon + dlon, lat + dlat
+
+# def chaikin(points: List[Tuple[float,float]], t=0.25, iterations=1):
+#     if len(points) < 3 or iterations <= 0:
+#         return points[:]
+#     pts = points[:]
+#     for _ in range(iterations):
+#         new_pts = [pts[0]]
+#         for i in range(len(pts)-1):
+#             p0 = np.array(pts[i])
+#             p1 = np.array(pts[i+1])
+#             Q = (1-t)*p0 + t*p1
+#             R = t*p0 + (1-t)*p1
+#             new_pts.extend([tuple(Q), tuple(R)])
+#         new_pts.append(pts[-1])
+#         pts = new_pts
+#     return pts
+
+# # =========================
+# # 데이터 모델
+# # =========================
+# @dataclass
+# class Hotspot:
+#     id: str
+#     lon: float
+#     lat: float
+#     weight: float = 1.0
+#     radius_m: float = 200.0
+#     visited: bool = False
+#     is_random: bool = False
+#     is_cover: bool = False
+#     mass: float = 1.0
+#     collected_mass: float = 0.0
+
+# @dataclass
+# class TrashPoint:
+#     lon: float
+#     lat: float
+#     weight: float = 1.0
+#     is_cover: bool = False
+#     visited: bool = False
+
+# # =========================
+# # 로더
+# # =========================
+# def load_hotspots(fp: str) -> Tuple[List[Hotspot], Optional[Tuple[float, float]]]:
+#     raw = load_json_any(fp)
+    
+#     # vessel 시작 위치 추출
+#     vessel = raw.get("vessel", {})
+#     start_lat = vessel.get("lat", None)
+#     start_lon = vessel.get("lng", vessel.get("lon", None))
+#     start_pos = None
+    
+#     if start_lat is not None and start_lon is not None:
+#         try:
+#             start_pos = (float(start_lon), float(start_lat))
+#             print(f"[vessel] Found start position: lon={start_pos[0]:.4f}, lat={start_pos[1]:.4f}")
+#         except Exception:
+#             print("[vessel] WARN: Invalid vessel coordinates")
+    
+#     hs_list: List[Hotspot] = []
+#     hs_raw = raw.get("hotspots", [])
+#     for i, rec in enumerate(hs_raw):
+#         lat = rec.get("lat")
+#         lon = rec.get("lng", rec.get("lon"))
+#         if lat is None or lon is None:
+#             print(f"[hotspots] WARN: hotspot #{i} missing lat/lon → skip")
+#             continue
+#         try:
+#             lat = float(lat); lon = float(lon)
+#         except Exception:
+#             print(f"[hotspots] WARN: hotspot #{i} lat/lon not float → skip")
+#             continue
+#         w = rec.get("weight", 1.0)
+#         try:
+#             w = float(w)
+#         except Exception:
+#             w = 1.0
+#         mass = max(1.0, 5.0 * w)
+#         hs_list.append(Hotspot(id=f"hs_{i}", lon=lon, lat=lat, weight=w, mass=mass))
+
+#     if not hs_list:
+#         raise ValueError("[hotspots] No valid hotspot records.")
+
+#     print(f"[hotspots] OK: loaded {len(hs_list)} records from {fp}")
+#     return hs_list, start_pos
+
+# def load_risk_points(fp: str) -> List[Tuple[float,float,float]]:
+#     try:
+#         gj = load_json_any(fp)
+#     except FileNotFoundError:
+#         print(f"[risk] WARN: file not found: {fp} → risk disabled")
+#         return []
+#     feats = gj.get("features", [])
+#     out = []
+#     for idx, ft in enumerate(feats):
+#         geom = ft.get("geometry", {})
+#         if geom.get("type") != "Point":
+#             continue
+#         coords = geom.get("coordinates", [])
+#         if len(coords) != 2:
+#             continue
+#         lon, lat = coords
+#         try:
+#             lon = float(lon); lat = float(lat)
+#             if math.isnan(lon) or math.isnan(lat):
+#                 continue
+#         except Exception:
+#             continue
+#         prop = ft.get("properties", {})
+#         risk = prop.get("최종위험도", prop.get("risk", 0.0))
+#         try:
+#             risk = float(risk)
+#         except Exception:
+#             risk = 0.0
+#         out.append((lon, lat, risk))
+#     print(f"[risk] OK: loaded {len(out)} risk points from {fp}")
+#     return out
+
+# # =========================
+# # 위험도 필드
+# # =========================
+# class RiskField:
+#     def __init__(self, pts: List[Tuple[float,float,float]]):
+#         self.pts = np.array(pts, dtype=float) if pts else np.zeros((0,3), dtype=float)
+#     def risk_at(self, lon: float, lat: float, neigh_r_m: float = RISK_NEIGHBOR_R_M) -> float:
+#         if self.pts.size == 0:
+#             return 0.0
+#         dlat_deg = neigh_r_m / 111000.0
+#         dlon_deg = neigh_r_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))
+#         mask = (
+#             (self.pts[:,0] >= lon - dlon_deg) &
+#             (self.pts[:,0] <= lon + dlon_deg) &
+#             (self.pts[:,1] >= lat - dlat_deg) &
+#             (self.pts[:,1] <= lat + dlat_deg)
+#         )
+#         cand = self.pts[mask]
+#         if cand.size == 0:
+#             return 0.0
+#         dists = np.array([haversine_m(lon, lat, L, A) for L, A, _ in cand], dtype=float)
+#         w = np.exp(-np.clip(dists, 0, neigh_r_m) / max(1.0, 0.35*neigh_r_m))
+#         risks = cand[:,2]
+#         denom = w.sum()
+#         return float((w * risks).sum() / denom) if denom > 0 else float(risks.mean())
+
+# # =========================
+# # 랜덤 쓰레기
+# # =========================
+# def generate_random_trash(hotspots: List[Hotspot],
+#                           bbox: Optional[Tuple[float,float,float,float]] = None) -> List[TrashPoint]:
+#     if not hotspots:
+#         return []
+#     hs_lons = [h.lon for h in hotspots]
+#     hs_lats = [h.lat for h in hotspots]
+#     if bbox is None:
+#         bbox = bbox_expand(hs_lons, hs_lats, pad_deg=0.1)
+
+#     pts: List[TrashPoint] = []
+#     # 핫스팟 중심 가우시안
+#     for h in hotspots:
+#         for _ in range(int(RANDOM_GAUSS_PER_HS * (1.0 - RANDOM_UNIFORM_FRACTION))):
+#             lon, lat = move_by_gaussian(h.lon, h.lat, GAUSS_SIGMA_M)
+#             pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+#     # 균일 일부
+#     for _ in range(int(RANDOM_UNIFORM_COUNT * RANDOM_UNIFORM_FRACTION)):
+#         lon, lat = random_point_in_bbox(bbox)
+#         pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+#     return pts
+
+# # =========================
+# # 메인 플래너
+# # =========================
+# def plan_route() -> dict:
+#     """
+#     전체 쓰레기 수거 경로 계획
+#     - 시간 제약 없음
+#     - 출발점: 위도가 가장 높은(북쪽) 핫스팟
+#     - Greedy Nearest Neighbor
+#     """
+#     # 1. 데이터 로드
+#     print("\n=== LOADING DATA ===")
+#     hotspots, vessel_start = load_hotspots(HOTSPOT_JSON)
+#     risk_pts = load_risk_points(RISK_GEOJSON)
+#     risk_field = RiskField(risk_pts)
+    
+#     # 2. 랜덤 쓰레기 생성
+#     print("\n=== GENERATING RANDOM TRASH ===")
+#     rand_pts = generate_random_trash(hotspots)
+#     print(f"[trash] Generated {len(rand_pts)} random trash points")
+    
+#     # 3. 랜덤 쓰레기 → 최근접 핫스팟에 질량 귀속
+#     print("\n=== ASSIGNING RANDOM TRASH TO HOTSPOTS ===")
+#     for rp in rand_pts:
+#         if not hotspots:
+#             break
+#         min_dist = float('inf')
+#         nearest_hs = hotspots[0]
+#         for h in hotspots:
+#             d = haversine_m(rp.lon, rp.lat, h.lon, h.lat)
+#             if d < min_dist:
+#                 min_dist = d
+#                 nearest_hs = h
+#         nearest_hs.mass += rp.weight
+    
+#     # 4. 출발점 결정
+#     print("\n=== DETERMINING START POINT ===")
+#     if vessel_start:
+#         start_lon, start_lat = vessel_start
+#         print(f"[start] Using vessel position: lon={start_lon:.4f}, lat={start_lat:.4f}")
+#     else:
+#         # vessel 정보 없으면 위도가 가장 높은 핫스팟
+#         start_hotspot = max(hotspots, key=lambda h: h.lat)
+#         start_lon, start_lat = start_hotspot.lon, start_hotspot.lat
+#         print(f"[start] No vessel info, using northernmost hotspot: {start_hotspot.id} at lat={start_lat:.4f}")
+    
+#     # 5. 경로 계획 (전체 쓰레기 방문)
+#     print("\n=== PLANNING ROUTE (ALL TRASH) ===")
+#     route = [(start_lon, start_lat)]
+#     current_pos = (start_lon, start_lat)
+    
+#     total_travel_time = 0.0
+#     total_collection_time = 0.0
+#     total_distance_m = 0.0
+#     visited_count = 0
+#     collision_count = 0
+    
+#     # 시작 위치에서 반경 내 쓰레기 수거 (vessel 시작점인 경우만)
+#     if vessel_start:
+#         for rp in rand_pts:
+#             if not rp.visited:
+#                 d = haversine_m(current_pos[0], current_pos[1], rp.lon, rp.lat)
+#                 if d <= CAPTURE_MIN_R_M:
+#                     rp.visited = True
+#                     total_collection_time += COLLECTION_TIME_PER_RANDOM_S
+        
+#         for h in hotspots:
+#             if not h.visited:
+#                 d = haversine_m(current_pos[0], current_pos[1], h.lon, h.lat)
+#                 if d <= CAPTURE_MIN_R_M:
+#                     h.visited = True
+#                     h.collected_mass = h.mass
+#                     total_collection_time += COLLECTION_TIME_PER_HOTSPOT_S
+#                     visited_count += 1
+    
+#     print(f"[start] Initial collection at start point complete")
+    
+#     # 나머지 모든 쓰레기 방문 (핫스팟 + 랜덤)
+#     while True:
+#         # 미방문 핫스팟과 랜덤 쓰레기 모두 수집
+#         unvisited_items = []
+        
+#         for h in hotspots:
+#             if not h.visited:
+#                 unvisited_items.append(('hotspot', h, h.lon, h.lat))
+        
+#         for rp in rand_pts:
+#             if not rp.visited:
+#                 unvisited_items.append(('random', rp, rp.lon, rp.lat))
+        
+#         if not unvisited_items:
+#             print("[route] All trash collected!")
+#             break
+        
+#         # 가장 가까운 쓰레기 선택
+#         nearest_item = min(unvisited_items, 
+#                           key=lambda x: haversine_m(current_pos[0], current_pos[1], x[2], x[3]))
+#         trash_type, trash_obj, nearest_lon, nearest_lat = nearest_item
+#         dist_to_nearest = haversine_m(current_pos[0], current_pos[1], nearest_lon, nearest_lat)
+        
+#         # 이동 시간 계산
+#         travel_time = dist_to_nearest / SPEED_MS
+        
+#         if trash_type == 'hotspot':
+#             collection_time = COLLECTION_TIME_PER_HOTSPOT_S
+#         else:
+#             collection_time = COLLECTION_TIME_PER_RANDOM_S
+        
+#         # 쓰레기 방문
+#         trash_obj.visited = True
+#         route.append((nearest_lon, nearest_lat))
+#         current_pos = (nearest_lon, nearest_lat)
+#         total_distance_m += dist_to_nearest
+#         total_travel_time += travel_time
+#         total_collection_time += collection_time
+        
+#         visited_count += 1
+        
+#         if trash_type == 'hotspot':
+#             # 핫스팟 자체 질량 수거
+#             trash_obj.collected_mass = trash_obj.mass
+            
+#             # 반경 내 랜덤 쓰레기 일괄 수거
+#             capture_radius = max(CAPTURE_MIN_R_M, trash_obj.radius_m * CAPTURE_FACTOR)
+#             rand_collected = 0
+#             for rp in rand_pts:
+#                 if not rp.visited:
+#                     d = haversine_m(current_pos[0], current_pos[1], rp.lon, rp.lat)
+#                     if d <= capture_radius:
+#                         rp.visited = True
+#                         rand_collected += 1
+#                         total_collection_time += COLLECTION_TIME_PER_RANDOM_S
+            
+#             # 위험도 체크
+#             risk_val = risk_field.risk_at(nearest_lon, nearest_lat)
+#             if risk_val > 0.5:
+#                 collision_count += 1
+            
+#             total_time_h = (total_travel_time + total_collection_time) / 3600.0
+#             print(f"[route] Visit #{visited_count}: {trash_obj.id} (hotspot) | dist={dist_to_nearest:.0f}m | "
+#                   f"mass={trash_obj.mass:.1f} | bonus_rand={rand_collected} | "
+#                   f"risk={risk_val:.2f} | time={total_time_h:.2f}h")
+#         else:
+#             # 랜덤 쓰레기 개별 수거
+#             total_time_h = (total_travel_time + total_collection_time) / 3600.0
+#             if visited_count % 50 == 0:  # 50개마다 출력
+#                 print(f"[route] Visit #{visited_count}: random trash | dist={dist_to_nearest:.0f}m | time={total_time_h:.2f}h")
+    
+#     # 6. 경로 스무딩
+#     print("\n=== SMOOTHING ROUTE ===")
+#     route_smooth = chaikin(route, t=SMOOTHING_T, iterations=SMOOTHING_ITER)
+#     print(f"[smooth] Original: {len(route)} points → Smoothed: {len(route_smooth)} points")
+    
+#     # 7. KPI 계산
+#     print("\n=== CALCULATING KPI ===")
+#     total_points = len(hotspots) + len(rand_pts)
+#     collected_points = sum(1 for h in hotspots if h.visited) + sum(1 for r in rand_pts if r.visited)
+#     total_mass = sum(h.mass for h in hotspots)
+#     collected_mass = sum(h.collected_mass for h in hotspots)
+    
+#     kpi = {
+#         'total_operation_time_h': (total_travel_time + total_collection_time) / 3600.0,
+#         'distance_km': total_distance_m / 1000.0,
+#         'travel_time_min': total_travel_time / 60.0,
+#         'collection_time_min': total_collection_time / 60.0,
+#         'total_points': total_points,
+#         'collected_points': collected_points,
+#         'point_rate': collected_points / max(1, total_points),
+#         'total_mass': total_mass,
+#         'collected_mass': collected_mass,
+#         'mass_rate': collected_mass / max(1.0, total_mass),
+#         'collision_count': collision_count,
+#         'visited_hotspots': visited_count
+#     }
+    
+#     print_run_summary(kpi)
+    
+#     # 8. 결과 저장
+#     print("\n=== SAVING RESULTS ===")
+#     result_json = {
+#         'route': [{'lon': lon, 'lat': lat} for lon, lat in route],
+#         'route_smooth': [{'lon': lon, 'lat': lat} for lon, lat in route_smooth],
+#         'kpi': kpi,
+#         'hotspots': [
+#             {
+#                 'id': h.id,
+#                 'lon': h.lon,
+#                 'lat': h.lat,
+#                 'visited': h.visited,
+#                 'mass': h.mass,
+#                 'collected_mass': h.collected_mass
+#             }
+#             for h in hotspots
+#         ]
+#     }
+    
+#     result_path = os.path.join(RESULT_DIR, "route_result.json")
+#     with open(result_path, 'w', encoding='utf-8') as f:
+#         json.dump(result_json, f, indent=2, ensure_ascii=False)
+#     print(f"[result] saved: {result_path}")
+    
+#     # 9. 지도 생성
+#     if folium:
+#         print("\n=== GENERATING MAP ===")
+#         save_map_html(route_smooth, hotspots, rand_pts, risk_pts)
+    
+#     return result_json
+
+
+# # =========================
+# # 출력 보조
+# # =========================
+# def print_run_summary(kpi: dict):
+#     print("\n=== RUN SUMMARY ===")
+#     print(f"- total op time     : {kpi['total_operation_time_h']:.2f} h")
+#     print(f"- distance          : {kpi['distance_km']:.2f} km")
+#     print(f"- travel time       : {kpi['travel_time_min']:.1f} min")
+#     print(f"- collection time   : {kpi['collection_time_min']:.1f} min")
+#     print(f"- point rate (포인트): {kpi['point_rate']*100:.1f}% ({kpi['collected_points']}/{kpi['total_points']})")
+#     print(f"- mass  rate (질량)  : {kpi['mass_rate']*100:.1f}% ({kpi['collected_mass']:.0f}/{kpi['total_mass']:.0f})")
+#     print(f"- collisions        : {kpi['collision_count']}")
+#     print(f"- visited hotspots  : {kpi['visited_hotspots']}")
+
+# def save_map_html(route_smooth: List[Tuple[float,float]],
+#                   hotspots: List[Hotspot],
+#                   rand_pts: List[TrashPoint],
+#                   risk_pts: List[Tuple[float,float,float]]):
+#     if not folium:
+#         print("[map] SKIP: folium not installed")
+#         return
+
+#     clat = float(np.mean([lat for _, lat in route_smooth]))
+#     clon = float(np.mean([lon for lon, _ in route_smooth]))
+#     m = folium.Map(location=[clat, clon], zoom_start=10, tiles="cartodbpositron")
+
+#     # Route
+#     fg_route = folium.FeatureGroup(name="Route (Smooth)", show=True)
+#     folium.PolyLine([(lat, lon) for lon, lat in route_smooth], weight=4, color='#0066ff').add_to(fg_route)
+#     # Start (green)
+#     folium.CircleMarker(location=[route_smooth[0][1], route_smooth[0][0]], radius=8,
+#                         color='#00ff00', fill=True, tooltip="START (Northernmost)").add_to(fg_route)
+#     # End (red)
+#     folium.CircleMarker(location=[route_smooth[-1][1], route_smooth[-1][0]], radius=8,
+#                         color='#ff0000', fill=True, tooltip="END").add_to(fg_route)
+#     fg_route.add_to(m)
+
+#     # Hotspots
+#     fg_hs = folium.FeatureGroup(name="Hotspots", show=True)
+#     for h in hotspots:
+#         color = "#ff0000" if h.visited else "#ff7f00"
+#         folium.CircleMarker([h.lat, h.lon], radius=6, color=color, fill=True,
+#                             tooltip=f"{h.id} | w={h.weight:.1f} | mass={h.mass:.1f} | coll={h.collected_mass:.1f}").add_to(fg_hs)
+#         capture_R = max(CAPTURE_MIN_R_M, h.radius_m * CAPTURE_FACTOR)
+#         folium.Circle([h.lat, h.lon], radius=capture_R, color="#ffaaaa", fill=False, opacity=0.3).add_to(fg_hs)
+#     fg_hs.add_to(m)
+
+#     # Random Trash (보라색, 기본 숨김)
+#     fg_rand = folium.FeatureGroup(name="Random Trash", show=False)
+#     for t in rand_pts:
+#         color = "#8000ff" if not t.visited else "#b380ff"
+#         folium.CircleMarker([t.lat, t.lon], radius=3, color=color, fill=True, opacity=0.6).add_to(fg_rand)
+#     fg_rand.add_to(m)
+
+#     # Risk points (기본 숨김)
+#     if risk_pts:
+#         fg_risk = folium.FeatureGroup(name="Risk points", show=False)
+#         for (lon, lat, rv) in risk_pts:
+#             col = "#ff0000" if rv >= 0.4 else "#ffaa00" if rv >= 0.25 else "#00aa88"
+#             folium.CircleMarker([lat, lon], radius=2.5, color=col, fill=True,
+#                                 tooltip=f"risk={rv:.2f}").add_to(fg_risk)
+#         fg_risk.add_to(m)
+
+#     folium.LayerControl(collapsed=False).add_to(m)
+#     out_html = os.path.join(RESULT_DIR, "route_map.html")
+#     m.save(out_html)
+#     print(f"[map] saved: {out_html}")
+
+# # =========================
+# # 엔트리포인트
+# # =========================
+# if __name__ == "__main__":
+#     result = plan_route()
+#     print("\n✅ ROUTE PLANNING COMPLETE!")
+
+
+
+
+
+
+
+
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------------------------
+# 하이브리드
+
+
+# -*- coding: utf-8 -*-
+"""
+daily_step10_test.py - 전체 쓰레기 수거 경로 계획
+- 시간 제약 없이 모든 핫스팟/랜덤 쓰레기 방문
+- 출발점: 위도가 가장 높은(북쪽) '쓰레기'(핫스팟 + 랜덤 포함)
+- 스코어 기반 선택 (거리/위험/중요도)
+"""
+
+import os
+import json
+import math
+import random
+from dataclasses import dataclass
+from typing import List, Tuple, Optional, Dict
+
+import numpy as np
+
+try:
+    import folium
+except Exception:
+    folium = None
+    print("[WARN] folium 미설치: HTML 지도 출력은 생략됩니다. pip install folium")
+
+# =========================
+# 경로/파라미터
+# =========================
+HOTSPOT_JSON = "./hotspots.json"
+RISK_GEOJSON = "./risk_14.geojson"
+RESULT_DIR = "./results"
+os.makedirs(RESULT_DIR, exist_ok=True)
+
+# 선박 속도 (요청: 약 3 km/h)
+SPEED_KMH = 3.0
+SPEED_MS = SPEED_KMH * 1000.0 / 3600.0
+
+# 수거 시간
+COLLECTION_TIME_PER_HOTSPOT_S = 30.0
+COLLECTION_TIME_PER_RANDOM_S  = 5.0
+
+# 랜덤 쓰레기 생성 파라미터
+RANDOM_GAUSS_PER_HS = 30
+RANDOM_UNIFORM_COUNT = 70
+RANDOM_UNIFORM_FRACTION = 0.2
+GAUSS_SIGMA_M = 200.0
+
+# 일괄 수거 반경
+CAPTURE_MIN_R_M = 300.0
+CAPTURE_FACTOR  = 1.5
+
+# 위험도 필드
+RISK_NEIGHBOR_R_M = 2500.0
+RISK_WEIGHT = 0.6
+
+# 경로 스무딩
+SMOOTHING_ITER = 2
+SMOOTHING_T = 0.25
+
+# =========================
+# 유틸
+# =========================
+def load_json_any(fp: str):
+    """UTF-8 → 실패 시 UTF-8-SIG(BOM)로 재시도"""
+    if not os.path.isfile(fp):
+        raise FileNotFoundError(fp)
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        with open(fp, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+
+def haversine_m(lon1, lat1, lon2, lat2) -> float:
+    R = 6371000.0
+    dlon = math.radians(lon2 - lon1)
+    dlat = math.radians(lat2 - lat1)
+    a = math.sin(dlat/2.0)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2.0)**2
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def bbox_expand(lons, lats, pad_deg=0.1):
+    return (min(lons)-pad_deg, min(lats)-pad_deg, max(lons)+pad_deg, max(lats)+pad_deg)
+
+def random_point_in_bbox(bbox):
+    minx, miny, maxx, maxy = bbox
+    return (random.uniform(minx, maxx), random.uniform(miny, maxy))
+
+def move_by_gaussian(lon, lat, sigma_m=200.0):
+    dlat = (sigma_m / 111000.0) * np.random.normal()
+    dlon = (sigma_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))) * np.random.normal()
+    return lon + dlon, lat + dlat
+
+def chaikin(points: List[Tuple[float,float]], t=0.25, iterations=1):
+    if len(points) < 3 or iterations <= 0:
+        return points[:]
+    pts = points[:]
+    for _ in range(iterations):
+        new_pts = [pts[0]]
+        for i in range(len(pts)-1):
+            p0 = np.array(pts[i])
+            p1 = np.array(pts[i+1])
+            Q = (1-t)*p0 + t*p1
+            R = t*p0 + (1-t)*p1
+            new_pts.extend([tuple(Q), tuple(R)])
+        new_pts.append(pts[-1])
+        pts = new_pts
+    return pts
+
+# =========================
+# 데이터 모델
+# =========================
+@dataclass
+class Hotspot:
+    id: str
+    lon: float
+    lat: float
+    weight: float = 1.0
+    radius_m: float = 200.0
+    visited: bool = False
+    is_random: bool = False
+    is_cover: bool = False
+    mass: float = 1.0
+    collected_mass: float = 0.0
+
+@dataclass
+class TrashPoint:
+    lon: float
+    lat: float
+    weight: float = 1.0
+    is_cover: bool = False
+    visited: bool = False
+
+# =========================
+# 로더
+# =========================
+def load_hotspots(fp: str) -> List[Hotspot]:
+    raw = load_json_any(fp)
+    hs_list: List[Hotspot] = []
+    hs_raw = raw.get("hotspots", [])
+    for i, rec in enumerate(hs_raw):
+        lat = rec.get("lat")
+        lon = rec.get("lng", rec.get("lon"))
+        if lat is None or lon is None:
+            print(f"[hotspots] WARN: hotspot #{i} missing lat/lon → skip")
+            continue
+        try:
+            lat = float(lat); lon = float(lon)
+        except Exception:
+            print(f"[hotspots] WARN: hotspot #{i} lat/lon not float → skip")
+            continue
+        w = rec.get("weight", 1.0)
+        try:
+            w = float(w)
+        except Exception:
+            w = 1.0
+        mass = max(1.0, 5.0 * w)
+        hs_list.append(Hotspot(id=f"hs_{i}", lon=lon, lat=lat, weight=w, mass=mass))
+
+    if not hs_list:
+        raise ValueError("[hotspots] No valid hotspot records.")
+
+    print(f"[hotspots] OK: loaded {len(hs_list)} records from {fp}")
+    return hs_list
+
+def load_risk_points(fp: str) -> List[Tuple[float,float,float]]:
+    try:
+        gj = load_json_any(fp)
+    except FileNotFoundError:
+        print(f"[risk] WARN: file not found: {fp} → risk disabled")
+        return []
+    feats = gj.get("features", [])
+    out = []
+    for idx, ft in enumerate(feats):
+        geom = ft.get("geometry", {})
+        if geom.get("type") != "Point":
+            continue
+        coords = geom.get("coordinates", [])
+        if len(coords) != 2:
+            continue
+        lon, lat = coords
+        try:
+            lon = float(lon); lat = float(lat)
+            if math.isnan(lon) or math.isnan(lat):
+                continue
+        except Exception:
+            continue
+        prop = ft.get("properties", {})
+        risk = prop.get("최종위험도", prop.get("risk", 0.0))
+        try:
+            risk = float(risk)
+        except Exception:
+            risk = 0.0
+        out.append((lon, lat, risk))
+    print(f"[risk] OK: loaded {len(out)} risk points from {fp}")
+    return out
+
+# =========================
+# 위험도 필드
+# =========================
+class RiskField:
+    def __init__(self, pts: List[Tuple[float,float,float]]):
+        self.pts = np.array(pts, dtype=float) if pts else np.zeros((0,3), dtype=float)
+    def risk_at(self, lon: float, lat: float, neigh_r_m: float = RISK_NEIGHBOR_R_M) -> float:
+        if self.pts.size == 0:
+            return 0.0
+        dlat_deg = neigh_r_m / 111000.0
+        dlon_deg = neigh_r_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))
+        mask = (
+            (self.pts[:,0] >= lon - dlon_deg) &
+            (self.pts[:,0] <= lon + dlon_deg) &
+            (self.pts[:,1] >= lat - dlat_deg) &
+            (self.pts[:,1] <= lat + dlat_deg)
+        )
+        cand = self.pts[mask]
+        if cand.size == 0:
+            return 0.0
+        dists = np.array([haversine_m(lon, lat, L, A) for L, A, _ in cand], dtype=float)
+        w = np.exp(-np.clip(dists, 0, neigh_r_m) / max(1.0, 0.35*neigh_r_m))
+        risks = cand[:,2]
+        denom = w.sum()
+        return float((w * risks).sum() / denom) if denom > 0 else float(risks.mean())
+
+# =========================
+# 경로 스코어/선택
+# =========================
+def score_hotspot(curr: Tuple[float,float], hs: Hotspot, risk_field: RiskField) -> float:
+    if hs.visited:
+        return -1e9
+    dist = haversine_m(curr[0], curr[1], hs.lon, hs.lat) + 1.0
+    local_risk = risk_field.risk_at(hs.lon, hs.lat)
+    importance = 0.4 * hs.weight + 0.6 * hs.mass
+    cost = dist * (1.0 + RISK_WEIGHT * local_risk)
+    return importance / cost
+
+def score_random_trash(curr: Tuple[float,float], trash: TrashPoint) -> float:
+    if trash.visited:
+        return -1e9
+    dist = haversine_m(curr[0], curr[1], trash.lon, trash.lat) + 1.0
+    return trash.weight / dist
+
+def select_next_target(curr_lon: float, curr_lat: float,
+                       hotspots: List[Hotspot], 
+                       rand_pts: List[TrashPoint],
+                       risk_field: RiskField) -> Optional[Tuple[str, object]]:
+    best_type = None
+    best_obj = None
+    best_score = -1e18
+    
+    for h in hotspots:
+        if h.visited:
+            continue
+        s = score_hotspot((curr_lon, curr_lat), h, risk_field)
+        if s > best_score:
+            best_score = s
+            best_type = 'hotspot'
+            best_obj = h
+    
+    for rp in rand_pts:
+        if rp.visited:
+            continue
+        s = score_random_trash((curr_lon, curr_lat), rp)
+        if s > best_score:
+            best_score = s
+            best_type = 'random'
+            best_obj = rp
+    
+    if best_obj is None:
+        return None
+    return (best_type, best_obj)
+
+def generate_random_trash(hotspots: List[Hotspot],
+                          bbox: Optional[Tuple[float,float,float,float]] = None) -> List[TrashPoint]:
+    if not hotspots:
+        return []
+    hs_lons = [h.lon for h in hotspots]
+    hs_lats = [h.lat for h in hotspots]
+    if bbox is None:
+        bbox = bbox_expand(hs_lons, hs_lats, pad_deg=0.1)
+
+    pts: List[TrashPoint] = []
+    # 핫스팟 중심 가우시안
+    for h in hotspots:
+        for _ in range(int(RANDOM_GAUSS_PER_HS * (1.0 - RANDOM_UNIFORM_FRACTION))):
+            lon, lat = move_by_gaussian(h.lon, h.lat, GAUSS_SIGMA_M)
+            pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+    # 균일 일부
+    for _ in range(int(RANDOM_UNIFORM_COUNT * RANDOM_UNIFORM_FRACTION)):
+        lon, lat = random_point_in_bbox(bbox)
+        pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+    return pts
+
+# =========================
+# 메인 플래너
+# =========================
+def plan_route() -> dict:
+    """
+    스코어 기반 경로 계획
+    - 거리, 위험도, 중요도를 종합 평가
+    - 시간 제약 없이 모든 쓰레기 수거
+    - 시작점: 전체(핫스팟+랜덤) 중 위도 최대 포인트
+    """
+    # 1. 데이터 로드
+    print("\n=== LOADING DATA ===")
+    hotspots = load_hotspots(HOTSPOT_JSON)
+    risk_pts = load_risk_points(RISK_GEOJSON)
+    risk_field = RiskField(risk_pts)
+    
+    # 2. 랜덤 쓰레기 생성
+    print("\n=== GENERATING RANDOM TRASH ===")
+    rand_pts = generate_random_trash(hotspots)
+    print(f"[trash] Generated {len(rand_pts)} random trash points")
+    
+    # 3. 랜덤 쓰레기 → 최근접 핫스팟에 질량 귀속
+    print("\n=== ASSIGNING RANDOM TRASH TO HOTSPOTS ===")
+    non_cover_random = [t for t in rand_pts if not t.is_cover]
+    hs_xy = np.array([(h.lon, h.lat) for h in hotspots], dtype=float)
+    for t in non_cover_random:
+        d = np.hypot((hs_xy[:,0]-t.lon)*math.cos(math.radians(t.lat))*111000.0,
+                     (hs_xy[:,1]-t.lat)*111000.0)
+        j = int(np.argmin(d))
+        hotspots[j].mass += max(1.0, t.weight * 1.0)
+    
+    # 4. 출발점 결정: 전체(핫스팟 + 랜덤) 중 '위도' 최댓값
+    print("\n=== DETERMINING START POINT (NORTHERNMOST TRASH) ===")
+    candidates = [('hotspot', h) for h in hotspots] + [('random', r) for r in non_cover_random]
+    if not candidates:
+        raise ValueError("No hotspots or random trash points to start from.")
+    start_type, start_obj = max(candidates, key=lambda x: x[1].lat)
+    print(f"[start] Northernmost {start_type}: lat={start_obj.lat:.5f}, lon={start_obj.lon:.5f}")
+
+    # 5. 경로 계획 (스코어 기반 선택)
+    print("\n=== PLANNING ROUTE (SCORE-BASED) ===")
+    route = [(start_obj.lon, start_obj.lat)]
+    cur_lon, cur_lat = start_obj.lon, start_obj.lat
+    
+    total_travel_time = 0.0
+    total_collection_time = 0.0
+    total_distance_m = 0.0
+    visited_count = 1
+    collision_count = 0
+
+    # 시작점 처리
+    if start_type == 'hotspot':
+        start_obj.visited = True
+        start_obj.collected_mass = start_obj.mass
+        # 반경 내 랜덤 쓰레기 일괄 수거
+        capture_radius = max(CAPTURE_MIN_R_M, start_obj.radius_m * CAPTURE_FACTOR)
+        rand_collected = 0
+        for rp in non_cover_random:
+            if not rp.visited:
+                d = haversine_m(cur_lon, cur_lat, rp.lon, rp.lat)
+                if d <= capture_radius:
+                    rp.visited = True
+                    rand_collected += 1
+                    total_collection_time += COLLECTION_TIME_PER_RANDOM_S
+                    start_obj.collected_mass += max(1.0, rp.weight * 1.0)
+        # 핫스팟 자체 수거 시간
+        total_collection_time += COLLECTION_TIME_PER_HOTSPOT_S
+        print(f"[route] Visit #1: {start_obj.id} (START hotspot) | mass={start_obj.mass:.1f} | bonus_rand={rand_collected}")
+    else:
+        # random 시작
+        start_obj.visited = True
+        total_collection_time += COLLECTION_TIME_PER_RANDOM_S
+        print(f"[route] Visit #1: random (START)")
+
+    # 6. 나머지 모든 쓰레기 방문 (스코어 기반)
+    iter_count = 0
+    while True:
+        next_target = select_next_target(cur_lon, cur_lat, hotspots, non_cover_random, risk_field)
+        if next_target is None:
+            print("[route] All trash collected!")
+            break
+        
+        target_type, target_obj = next_target
+        target_lon, target_lat = target_obj.lon, target_obj.lat
+        
+        # 이동
+        dist = haversine_m(cur_lon, cur_lat, target_lon, target_lat)
+        travel_time = dist / SPEED_MS
+        collection_time = COLLECTION_TIME_PER_HOTSPOT_S if target_type == 'hotspot' else COLLECTION_TIME_PER_RANDOM_S
+        
+        # 방문
+        target_obj.visited = True
+        route.append((target_lon, target_lat))
+        cur_lon, cur_lat = target_lon, target_lat
+        total_distance_m += dist
+        total_travel_time += travel_time
+        total_collection_time += collection_time
+        visited_count += 1
+        
+        if target_type == 'hotspot':
+            # 핫스팟 수거
+            target_obj.collected_mass = target_obj.mass
+            # 반경 내 랜덤 쓰레기 일괄 수거
+            capture_radius = max(CAPTURE_MIN_R_M, target_obj.radius_m * CAPTURE_FACTOR)
+            rand_collected = 0
+            for rp in non_cover_random:
+                if not rp.visited:
+                    d = haversine_m(cur_lon, cur_lat, rp.lon, rp.lat)
+                    if d <= capture_radius:
+                        rp.visited = True
+                        rand_collected += 1
+                        total_collection_time += COLLECTION_TIME_PER_RANDOM_S
+                        target_obj.collected_mass += max(1.0, rp.weight * 1.0)
+            # 위험도 체크
+            risk_val = risk_field.risk_at(target_lon, target_lat)
+            if risk_val > 0.5:
+                collision_count += 1
+            
+            total_time_h = (total_travel_time + total_collection_time) / 3600.0
+            print(f"[route] Visit #{visited_count}: {target_obj.id} (hotspot) | dist={dist:.0f}m | "
+                  f"mass={target_obj.mass:.1f} | bonus_rand={rand_collected} | "
+                  f"risk={risk_val:.2f} | time={total_time_h:.2f}h")
+        else:
+            total_time_h = (total_travel_time + total_collection_time) / 3600.0
+            if visited_count % 50 == 0:
+                print(f"[route] Visit #{visited_count}: random trash | dist={dist:.0f}m | time={total_time_h:.2f}h")
+        
+        iter_count += 1
+        if iter_count > 10000:
+            print("[route] WARNING: Max iterations reached")
+            break
+    
+    # 7. 경로 스무딩
+    print("\n=== SMOOTHING ROUTE ===")
+    route_smooth = chaikin(route, t=SMOOTHING_T, iterations=SMOOTHING_ITER)
+    print(f"[smooth] Original: {len(route)} points → Smoothed: {len(route_smooth)} points")
+    
+    # 8. KPI 계산
+    print("\n=== CALCULATING KPI ===")
+    total_points = len(hotspots) + len(non_cover_random)
+    collected_points = sum(1 for h in hotspots if h.visited) + sum(1 for r in non_cover_random if r.visited)
+    total_mass = sum(h.mass for h in hotspots)
+    collected_mass = sum(h.collected_mass for h in hotspots)
+    
+    kpi = {
+        'total_operation_time_h': (total_travel_time + total_collection_time) / 3600.0,
+        'distance_km': total_distance_m / 1000.0,
+        'travel_time_min': total_travel_time / 60.0,
+        'collection_time_min': total_collection_time / 60.0,
+        'total_points': total_points,
+        'collected_points': collected_points,
+        'point_rate': collected_points / max(1, total_points),
+        'total_mass': total_mass,
+        'collected_mass': collected_mass,
+        'mass_rate': collected_mass / max(1.0, total_mass),
+        'collision_count': collision_count,
+        'visited_hotspots': visited_count  # (명칭 유지)
+    }
+    
+    print_run_summary(kpi)
+    
+    # 9. 결과 저장
+    print("\n=== SAVING RESULTS ===")
+    result_json = {
+        'route': [{'lon': lon, 'lat': lat} for lon, lat in route],
+        'route_smooth': [{'lon': lon, 'lat': lat} for lon, lat in route_smooth],
+        'kpi': kpi,
+        'hotspots': [
+            {
+                'id': h.id,
+                'lon': h.lon,
+                'lat': h.lat,
+                'visited': h.visited,
+                'mass': h.mass,
+                'collected_mass': h.collected_mass
+            }
+            for h in hotspots
+        ]
+    }
+    
+    result_path = os.path.join(RESULT_DIR, "route_result.json")
+    with open(result_path, 'w', encoding='utf-8') as f:
+        json.dump(result_json, f, indent=2, ensure_ascii=False)
+    print(f"[result] saved: {result_path}")
+    
+    # 10. 지도 생성
+    if folium:
+        print("\n=== GENERATING MAP ===")
+        save_map_html(route_smooth, hotspots, non_cover_random, risk_pts)
+    
+    return result_json
+
+
+# =========================
+# 출력 보조
+# =========================
+def print_run_summary(kpi: dict):
+    print("\n=== RUN SUMMARY ===")
+    print(f"- total op time     : {kpi['total_operation_time_h']:.2f} h")
+    print(f"- distance          : {kpi['distance_km']:.2f} km")
+    print(f"- travel time       : {kpi['travel_time_min']:.1f} min")
+    print(f"- collection time   : {kpi['collection_time_min']:.1f} min")
+    print(f"- point rate (포인트): {kpi['point_rate']*100:.1f}% ({kpi['collected_points']}/{kpi['total_points']})")
+    print(f"- mass  rate (질량)  : {kpi['mass_rate']*100:.1f}% ({kpi['collected_mass']:.0f}/{kpi['total_mass']:.0f})")
+    print(f"- collisions        : {kpi['collision_count']}")
+    print(f"- visited hotspots  : {kpi['visited_hotspots']}")
+
+def save_map_html(route_smooth: List[Tuple[float,float]],
+                  hotspots: List[Hotspot],
+                  rand_pts: List[TrashPoint],
+                  risk_pts: List[Tuple[float,float,float]]):
+    if not folium:
+        print("[map] SKIP: folium not installed")
+        return
+
+    clat = float(np.mean([lat for _, lat in route_smooth]))
+    clon = float(np.mean([lon for lon, _ in route_smooth]))
+    m = folium.Map(location=[clat, clon], zoom_start=10, tiles="cartodbpositron")
+
+    # Route
+    fg_route = folium.FeatureGroup(name="Route (Smooth)", show=True)
+    folium.PolyLine([(lat, lon) for lon, lat in route_smooth], weight=4, color='#0066ff').add_to(fg_route)
+    # Start (green)
+    folium.CircleMarker(location=[route_smooth[0][1], route_smooth[0][0]], radius=8,
+                        color='#00ff00', fill=True, tooltip="START (Northernmost)").add_to(fg_route)
+    # End (red)
+    folium.CircleMarker(location=[route_smooth[-1][1], route_smooth[-1][0]], radius=8,
+                        color='#ff0000', fill=True, tooltip="END").add_to(fg_route)
+    fg_route.add_to(m)
+
+    # Hotspots
+    fg_hs = folium.FeatureGroup(name="Hotspots", show=True)
+    for h in hotspots:
+        color = "#ff0000" if h.visited else "#ff7f00"
+        folium.CircleMarker([h.lat, h.lon], radius=6, color=color, fill=True,
+                            tooltip=f"{h.id} | w={h.weight:.1f} | mass={h.mass:.1f} | coll={h.collected_mass:.1f}").add_to(fg_hs)
+        capture_R = max(CAPTURE_MIN_R_M, h.radius_m * CAPTURE_FACTOR)
+        folium.Circle([h.lat, h.lon], radius=capture_R, color="#ffaaaa", fill=False, opacity=0.3).add_to(fg_hs)
+    fg_hs.add_to(m)
+
+    # Random Trash (보라색, 기본 숨김)
+    fg_rand = folium.FeatureGroup(name="Random Trash", show=False)
+    for t in rand_pts:
+        color = "#8000ff" if not t.visited else "#b380ff"
+        folium.CircleMarker([t.lat, t.lon], radius=3, color=color, fill=True, opacity=0.6).add_to(fg_rand)
+    fg_rand.add_to(m)
+
+    # Risk points (기본 숨김)
+    if risk_pts:
+        fg_risk = folium.FeatureGroup(name="Risk points", show=False)
+        for (lon, lat, rv) in risk_pts:
+            col = "#ff0000" if rv >= 0.4 else "#ffaa00" if rv >= 0.25 else "#00aa88"
+            folium.CircleMarker([lat, lon], radius=2.5, color=col, fill=True,
+                                tooltip=f"risk={rv:.2f}").add_to(fg_risk)
+        fg_risk.add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
+    out_html = os.path.join(RESULT_DIR, "route_map.html")
+    m.save(out_html)
+    print(f"[map] saved: {out_html}")
+
+# =========================
+# 엔트리포인트
+# =========================
+if __name__ == "__main__":
+    result = plan_route()
+    print("\n✅ ROUTE PLANNING COMPLETE!")
+
+
+
+
+
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------------------------
+# 두개 통합
+
+
+# # -*- coding: utf-8 -*-
+# """
+# dual_compare_step10.py
+# - 같은 랜덤 분포로 두 알고리즘을 한 번에 실행/비교
+#   * Algo A: Score-based (거리/위험/중요도)
+#   * Algo B: Greedy Nearest Neighbor (가장 가까운 쓰레기)
+# - 시작점: '쓰레기'(핫스팟+랜덤) 중 위도(lat) 최댓값
+# - 기본: 매 실행마다 새로운 시드 자동 생성 → 항상 다른 랜덤 분포
+# - 필요시 --seed <int> 로 재현 가능
+# """
+
+# import os
+# import time
+# import json
+# import math
+# import argparse
+# from copy import deepcopy
+# from dataclasses import dataclass
+# from typing import List, Tuple, Optional, Dict
+
+# import numpy as np
+
+# try:
+#     import folium
+# except Exception:
+#     folium = None
+#     print("[WARN] folium 미설치: HTML 지도 출력은 생략됩니다.  pip install folium")
+
+# # =========================
+# # 경로/파라미터
+# # =========================
+# HOTSPOT_JSON = "./hotspots.json"
+# RISK_GEOJSON = "./risk_14.geojson"
+# RESULT_DIR   = "./results"
+# os.makedirs(RESULT_DIR, exist_ok=True)
+
+# # 선박 속도 (요청: 약 3 km/h)
+# SPEED_KMH = 3.0
+# SPEED_MS  = SPEED_KMH * 1000.0 / 3600.0
+
+# # 수거 시간
+# COLLECTION_TIME_PER_HOTSPOT_S = 30.0
+# COLLECTION_TIME_PER_RANDOM_S  = 5.0
+
+# # 랜덤 쓰레기 생성 파라미터
+# RANDOM_GAUSS_PER_HS     = 30
+# RANDOM_UNIFORM_COUNT    = 70
+# RANDOM_UNIFORM_FRACTION = 0.2
+# GAUSS_SIGMA_M = 200.0
+
+# # 일괄 수거 반경
+# CAPTURE_MIN_R_M = 300.0
+# CAPTURE_FACTOR  = 1.5
+
+# # 위험도 필드
+# RISK_NEIGHBOR_R_M = 2500.0
+# RISK_WEIGHT       = 0.6
+
+# # 경로 스무딩
+# SMOOTHING_ITER = 2
+# SMOOTHING_T    = 0.25
+
+# # =========================
+# # 유틸
+# # =========================
+# def make_rng(seed: Optional[int]) -> np.random.Generator:
+#     """seed가 None이면 매 실행마다 새로운 seed 자동 생성"""
+#     if seed is None:
+#         # os.urandom + 시간 혼합: 실행마다 달라짐
+#         raw = int.from_bytes(os.urandom(8), "big") ^ int(time.time_ns())
+#         seed_val = raw % (2**32)
+#         print(f"[seed] AUTO → {seed_val}")
+#         return np.random.default_rng(seed_val)
+#     else:
+#         print(f"[seed] FIXED → {seed}")
+#         return np.random.default_rng(seed)
+
+# def load_json_any(fp: str):
+#     if not os.path.isfile(fp):
+#         raise FileNotFoundError(fp)
+#     try:
+#         with open(fp, "r", encoding="utf-8") as f:
+#             return json.load(f)
+#     except json.JSONDecodeError:
+#         with open(fp, "r", encoding="utf-8-sig") as f:
+#             return json.load(f)
+
+# def haversine_m(lon1, lat1, lon2, lat2) -> float:
+#     R = 6371000.0
+#     dlon = math.radians(lon2 - lon1)
+#     dlat = math.radians(lat2 - lat1)
+#     a = math.sin(dlat/2.0)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2.0)**2
+#     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+#     return R * c
+
+# def bbox_expand(lons, lats, pad_deg=0.1):
+#     return (min(lons)-pad_deg, min(lats)-pad_deg, max(lons)+pad_deg, max(lats)+pad_deg)
+
+# def chaikin(points: List[Tuple[float,float]], t=0.25, iterations=1):
+#     if len(points) < 3 or iterations <= 0:
+#         return points[:]
+#     pts = points[:]
+#     for _ in range(iterations):
+#         new_pts = [pts[0]]
+#         for i in range(len(pts)-1):
+#             p0 = np.array(pts[i]); p1 = np.array(pts[i+1])
+#             Q = (1-t)*p0 + t*p1
+#             R = t*p0 + (1-t)*p1
+#             new_pts.extend([tuple(Q), tuple(R)])
+#         new_pts.append(pts[-1])
+#         pts = new_pts
+#     return pts
+
+# # =========================
+# # 데이터 모델
+# # =========================
+# @dataclass
+# class Hotspot:
+#     id: str
+#     lon: float
+#     lat: float
+#     weight: float = 1.0
+#     radius_m: float = 200.0
+#     visited: bool = False
+#     is_random: bool = False
+#     is_cover: bool = False
+#     mass: float = 1.0
+#     collected_mass: float = 0.0
+
+# @dataclass
+# class TrashPoint:
+#     lon: float
+#     lat: float
+#     weight: float = 1.0
+#     is_cover: bool = False
+#     visited: bool = False
+
+# # =========================
+# # 로더
+# # =========================
+# def load_hotspots(fp: str) -> List[Hotspot]:
+#     raw = load_json_any(fp)
+#     hs_list: List[Hotspot] = []
+#     hs_raw = raw.get("hotspots", [])
+#     for i, rec in enumerate(hs_raw):
+#         lat = rec.get("lat")
+#         lon = rec.get("lng", rec.get("lon"))
+#         if lat is None or lon is None:
+#             print(f"[hotspots] WARN: hotspot #{i} missing lat/lon → skip")
+#             continue
+#         try:
+#             lat = float(lat); lon = float(lon)
+#         except Exception:
+#             print(f"[hotspots] WARN: hotspot #{i} lat/lon not float → skip")
+#             continue
+#         w = rec.get("weight", 1.0)
+#         try:
+#             w = float(w)
+#         except Exception:
+#             w = 1.0
+#         mass = max(1.0, 5.0 * w)
+#         hs_list.append(Hotspot(id=f"hs_{i}", lon=lon, lat=lat, weight=w, mass=mass))
+#     if not hs_list:
+#         raise ValueError("[hotspots] No valid hotspot records.")
+#     print(f"[hotspots] OK: loaded {len(hs_list)} records from {fp}")
+#     return hs_list
+
+# def load_risk_points(fp: str) -> List[Tuple[float,float,float]]:
+#     try:
+#         gj = load_json_any(fp)
+#     except FileNotFoundError:
+#         print(f"[risk] WARN: file not found: {fp} → risk disabled")
+#         return []
+#     feats = gj.get("features", [])
+#     out = []
+#     for ft in feats:
+#         geom = ft.get("geometry", {})
+#         if geom.get("type") != "Point":
+#             continue
+#         coords = geom.get("coordinates", [])
+#         if len(coords) != 2:
+#             continue
+#         lon, lat = coords
+#         try:
+#             lon = float(lon); lat = float(lat)
+#             if math.isnan(lon) or math.isnan(lat):
+#                 continue
+#         except Exception:
+#             continue
+#         prop = ft.get("properties", {})
+#         risk = prop.get("최종위험도", prop.get("risk", 0.0))
+#         try:
+#             risk = float(risk)
+#         except Exception:
+#             risk = 0.0
+#         out.append((lon, lat, risk))
+#     print(f"[risk] OK: loaded {len(out)} risk points from {fp}")
+#     return out
+
+# # =========================
+# # 위험도 필드
+# # =========================
+# class RiskField:
+#     def __init__(self, pts: List[Tuple[float,float,float]]):
+#         self.pts = np.array(pts, dtype=float) if pts else np.zeros((0,3), dtype=float)
+#     def risk_at(self, lon: float, lat: float, neigh_r_m: float = RISK_NEIGHBOR_R_M) -> float:
+#         if self.pts.size == 0:
+#             return 0.0
+#         dlat_deg = neigh_r_m / 111000.0
+#         dlon_deg = neigh_r_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))
+#         mask = (
+#             (self.pts[:,0] >= lon - dlon_deg) &
+#             (self.pts[:,0] <= lon + dlon_deg) &
+#             (self.pts[:,1] >= lat - dlat_deg) &
+#             (self.pts[:,1] <= lat + dlat_deg)
+#         )
+#         cand = self.pts[mask]
+#         if cand.size == 0:
+#             return 0.0
+#         dists = np.array([haversine_m(lon, lat, L, A) for L, A, _ in cand], dtype=float)
+#         w = np.exp(-np.clip(dists, 0, neigh_r_m) / max(1.0, 0.35*neigh_r_m))
+#         risks = cand[:,2]
+#         denom = w.sum()
+#         return float((w * risks).sum() / denom) if denom > 0 else float(risks.mean())
+
+# # =========================
+# # 점수함수/선택자
+# # =========================
+# def score_hotspot(curr: Tuple[float,float], hs: Hotspot, risk_field: RiskField) -> float:
+#     if hs.visited:
+#         return -1e9
+#     dist = haversine_m(curr[0], curr[1], hs.lon, hs.lat) + 1.0
+#     local_risk = risk_field.risk_at(hs.lon, hs.lat)
+#     importance = 0.4 * hs.weight + 0.6 * hs.mass
+#     cost = dist * (1.0 + RISK_WEIGHT * local_risk)
+#     return importance / cost
+
+# def score_random(curr: Tuple[float,float], rp: TrashPoint) -> float:
+#     if rp.visited:
+#         return -1e9
+#     dist = haversine_m(curr[0], curr[1], rp.lon, rp.lat) + 1.0
+#     return rp.weight / dist
+
+# def select_next_by_score(curr_lon: float, curr_lat: float,
+#                          hotspots: List[Hotspot],
+#                          rand_pts: List[TrashPoint],
+#                          risk_field: RiskField) -> Optional[Tuple[str, object]]:
+#     best = None; best_score = -1e18
+#     for h in hotspots:
+#         if h.visited: continue
+#         s = score_hotspot((curr_lon, curr_lat), h, risk_field)
+#         if s > best_score:
+#             best, best_score = ('hotspot', h), s
+#     for rp in rand_pts:
+#         if rp.visited: continue
+#         s = score_random((curr_lon, curr_lat), rp)
+#         if s > best_score:
+#             best, best_score = ('random', rp), s
+#     return best
+
+# def select_next_by_nearest(curr_lon: float, curr_lat: float,
+#                            hotspots: List[Hotspot],
+#                            rand_pts: List[TrashPoint]) -> Optional[Tuple[str, object]]:
+#     best = None; best_dist = 1e99
+#     for h in hotspots:
+#         if h.visited: continue
+#         d = haversine_m(curr_lon, curr_lat, h.lon, h.lat)
+#         if d < best_dist:
+#             best, best_dist = ('hotspot', h), d
+#     for rp in rand_pts:
+#         if rp.visited: continue
+#         d = haversine_m(curr_lon, curr_lat, rp.lon, rp.lat)
+#         if d < best_dist:
+#             best, best_dist = ('random', rp), d
+#     return best
+
+# # =========================
+# # 랜덤 쓰레기 생성 (RNG 사용)
+# # =========================
+# def move_by_gaussian(rng: np.random.Generator, lon, lat, sigma_m=200.0):
+#     dlat = (sigma_m / 111000.0) * rng.normal()
+#     dlon = (sigma_m / (111000.0 * max(1e-6, math.cos(math.radians(lat))))) * rng.normal()
+#     return lon + dlon, lat + dlat
+
+# def random_point_in_bbox(rng: np.random.Generator, bbox):
+#     minx, miny, maxx, maxy = bbox
+#     return (rng.uniform(minx, maxx), rng.uniform(miny, maxy))
+
+# def generate_random_trash(rng: np.random.Generator,
+#                           hotspots: List[Hotspot],
+#                           bbox: Optional[Tuple[float,float,float,float]] = None) -> List[TrashPoint]:
+#     if not hotspots:
+#         return []
+#     hs_lons = [h.lon for h in hotspots]
+#     hs_lats = [h.lat for h in hotspots]
+#     if bbox is None:
+#         bbox = bbox_expand(hs_lons, hs_lats, pad_deg=0.1)
+
+#     pts: List[TrashPoint] = []
+#     n_gauss = int(RANDOM_GAUSS_PER_HS * (1.0 - RANDOM_UNIFORM_FRACTION))
+#     for h in hotspots:
+#         for _ in range(n_gauss):
+#             lon, lat = move_by_gaussian(rng, h.lon, h.lat, GAUSS_SIGMA_M)
+#             pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+#     n_uni = int(RANDOM_UNIFORM_COUNT * RANDOM_UNIFORM_FRACTION)
+#     for _ in range(n_uni):
+#         lon, lat = random_point_in_bbox(rng, bbox)
+#         pts.append(TrashPoint(lon=lon, lat=lat, weight=1.0, is_cover=False))
+#     return pts
+
+# def assign_random_mass_to_hotspots(hotspots: List[Hotspot], rand_pts: List[TrashPoint]):
+#     if not hotspots: return
+#     hs_xy = np.array([(h.lon, h.lat) for h in hotspots], dtype=float)
+#     for t in rand_pts:
+#         d = np.hypot((hs_xy[:,0]-t.lon)*math.cos(math.radians(t.lat))*111000.0,
+#                      (hs_xy[:,1]-t.lat)*111000.0)
+#         j = int(np.argmin(d))
+#         hotspots[j].mass += max(1.0, t.weight * 1.0)
+
+# # =========================
+# # 공통: 시작점(북쪽 최상단)
+# # =========================
+# def pick_start_northernmost(hotspots: List[Hotspot], rand_pts: List[TrashPoint]) -> Tuple[str, object]:
+#     candidates = [('hotspot', h) for h in hotspots] + [('random', r) for r in rand_pts]
+#     if not candidates:
+#         raise ValueError("No points to start from.")
+#     return max(candidates, key=lambda x: x[1].lat)
+
+# # =========================
+# # 러너(공유 루틴)
+# # =========================
+# def run_algorithm(name: str,
+#                   hotspots_in: List[Hotspot],
+#                   rand_in: List[TrashPoint],
+#                   risk_field: RiskField,
+#                   selector_fn) -> Dict:
+#     hotspots = deepcopy(hotspots_in)
+#     rand_pts = deepcopy(rand_in)
+
+#     st_type, st_obj = pick_start_northernmost(hotspots, rand_pts)
+#     route = [(st_obj.lon, st_obj.lat)]
+#     cur_lon, cur_lat = st_obj.lon, st_obj.lat
+
+#     total_travel = 0.0
+#     total_collect = 0.0
+#     total_dist    = 0.0
+#     visited_cnt   = 1
+#     collisions    = 0
+
+#     if st_type == 'hotspot':
+#         st_obj.visited = True
+#         st_obj.collected_mass = st_obj.mass
+#         capture_R = max(CAPTURE_MIN_R_M, st_obj.radius_m * CAPTURE_FACTOR)
+#         for rp in rand_pts:
+#             if not rp.visited and haversine_m(cur_lon, cur_lat, rp.lon, rp.lat) <= capture_R:
+#                 rp.visited = True
+#                 total_collect += COLLECTION_TIME_PER_RANDOM_S
+#                 st_obj.collected_mass += max(1.0, rp.weight * 1.0)
+#         total_collect += COLLECTION_TIME_PER_HOTSPOT_S
+#     else:
+#         st_obj.visited = True
+#         total_collect += COLLECTION_TIME_PER_RANDOM_S
+
+#     loop_guard = 0
+#     while True:
+#         next_sel = selector_fn(cur_lon, cur_lat, hotspots, rand_pts) if name == "nearest" \
+#                    else selector_fn(cur_lon, cur_lat, hotspots, rand_pts, risk_field)
+#         if next_sel is None:
+#             break
+#         tgt_type, tgt = next_sel
+#         dist = haversine_m(cur_lon, cur_lat, tgt.lon, tgt.lat)
+#         travel = dist / SPEED_MS
+#         collect = COLLECTION_TIME_PER_HOTSPOT_S if tgt_type == 'hotspot' else COLLECTION_TIME_PER_RANDOM_S
+
+#         tgt.visited = True
+#         route.append((tgt.lon, tgt.lat))
+#         cur_lon, cur_lat = tgt.lon, tgt.lat
+#         total_dist   += dist
+#         total_travel += travel
+#         total_collect += collect
+#         visited_cnt += 1
+
+#         if tgt_type == 'hotspot':
+#             tgt.collected_mass = tgt.mass
+#             capture_R = max(CAPTURE_MIN_R_M, tgt.radius_m * CAPTURE_FACTOR)
+#             for rp in rand_pts:
+#                 if not rp.visited and haversine_m(cur_lon, cur_lat, rp.lon, rp.lat) <= capture_R:
+#                     rp.visited = True
+#                     total_collect += COLLECTION_TIME_PER_RANDOM_S
+#                     tgt.collected_mass += max(1.0, rp.weight * 1.0)
+#             if risk_field.risk_at(tgt.lon, tgt.lat) > 0.5:
+#                 collisions += 1
+
+#         loop_guard += 1
+#         if loop_guard > 10000:
+#             print(f"[{name}] WARNING: Max iterations reached")
+#             break
+
+#     route_smooth = chaikin(route, t=SMOOTHING_T, iterations=SMOOTHING_ITER)
+
+#     total_points = len(hotspots) + len(rand_pts)
+#     collected_points = sum(1 for h in hotspots if h.visited) + sum(1 for r in rand_pts if r.visited)
+#     total_mass = sum(h.mass for h in hotspots)
+#     collected_mass = sum(h.collected_mass for h in hotspots)
+
+#     kpi = {
+#         'algo': name,
+#         'total_operation_time_h': (total_travel + total_collect) / 3600.0,
+#         'distance_km': total_dist / 1000.0,
+#         'travel_time_min': total_travel / 60.0,
+#         'collection_time_min': total_collect / 60.0,
+#         'total_points': total_points,
+#         'collected_points': collected_points,
+#         'point_rate': collected_points / max(1, total_points),
+#         'total_mass': total_mass,
+#         'collected_mass': collected_mass,
+#         'mass_rate': collected_mass / max(1.0, total_mass),
+#         'collision_count': collisions,
+#         'visited_steps': visited_cnt
+#     }
+#     return {
+#         'route': route,
+#         'route_smooth': route_smooth,
+#         'kpi': kpi,
+#         'hotspots': hotspots,
+#         'rand_pts': rand_pts
+#     }
+
+# # =========================
+# # 지도 출력
+# # =========================
+# def add_route_layer(m, name: str, route_smooth: List[Tuple[float,float]], color: str):
+#     fg = folium.FeatureGroup(name=name, show=True)
+#     folium.PolyLine([(lat, lon) for lon, lat in route_smooth], weight=4, color=color, opacity=0.9).add_to(fg)
+#     folium.CircleMarker([route_smooth[0][1], route_smooth[0][0]], radius=7, color='#00cc66',
+#                         fill=True, tooltip=f"{name} START").add_to(fg)
+#     folium.CircleMarker([route_smooth[-1][1], route_smooth[-1][0]], radius=7, color='#cc0033',
+#                         fill=True, tooltip=f"{name} END").add_to(fg)
+#     fg.add_to(m)
+
+# def save_map_compare(results_a: Dict, results_b: Dict,
+#                      base_hotspots: List[Hotspot],
+#                      base_rand: List[TrashPoint],
+#                      risk_pts: List[Tuple[float,float,float]]):
+
+#     all_lat = [lat for _, lat in results_a['route_smooth']] + [lat for _, lat in results_b['route_smooth']]
+#     all_lon = [lon for lon, _ in results_a['route_smooth']] + [lon for lon, _ in results_b['route_smooth']]
+#     clat = float(np.mean(all_lat)); clon = float(np.mean(all_lon))
+#     m = folium.Map(location=[clat, clon], zoom_start=10, tiles="cartodbpositron")
+
+#     add_route_layer(m, "Route – Score",   results_a['route_smooth'], "#0066ff")
+#     add_route_layer(m, "Route – Nearest", results_b['route_smooth'], "#00b386")
+
+#     fg_hs = folium.FeatureGroup(name="Hotspots", show=True)
+#     for h in base_hotspots:
+#         color = "#ff0000" if h.visited else "#ff7f00"
+#         folium.CircleMarker([h.lat, h.lon], radius=6, color=color, fill=True,
+#                             tooltip=f"{h.id} | w={h.weight:.1f} | mass={h.mass:.1f}").add_to(fg_hs)
+#         capture_R = max(CAPTURE_MIN_R_M, h.radius_m * CAPTURE_FACTOR)
+#         folium.Circle([h.lat, h.lon], radius=capture_R, color="#ffaaaa", fill=False, opacity=0.25).add_to(fg_hs)
+#     fg_hs.add_to(m)
+
+#     fg_rand = folium.FeatureGroup(name="Random Trash", show=False)
+#     for t in base_rand:
+#         folium.CircleMarker([t.lat, t.lon], radius=3, color="#8000ff", fill=True, opacity=0.6).add_to(fg_rand)
+#     fg_rand.add_to(m)
+
+#     if risk_pts:
+#         fg_risk = folium.FeatureGroup(name="Risk points", show=False)
+#         for (lon, lat, rv) in risk_pts:
+#             col = "#ff0000" if rv >= 0.4 else "#ffaa00" if rv >= 0.25 else "#00aa88"
+#             folium.CircleMarker([lat, lon], radius=2.5, color=col, fill=True,
+#                                 tooltip=f"risk={rv:.2f}").add_to(fg_risk)
+#         fg_risk.add_to(m)
+
+#     folium.LayerControl(collapsed=False).add_to(m)
+#     out_html = os.path.join(RESULT_DIR, "route_map_compare.html")
+#     m.save(out_html)
+#     print(f"[map] saved: {out_html}")
+
+# # =========================
+# # 메인
+# # =========================
+# def main():
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("--seed", type=int, default=None, help="재현용 고정 시드 (기본: None → 매 실행 랜덤)")
+#     args = parser.parse_args()
+
+#     rng = make_rng(args.seed)
+
+#     print("\n=== DUAL ALGO COMPARE START ===")
+
+#     # 1) 데이터 로드
+#     hotspots = load_hotspots(HOTSPOT_JSON)
+#     risk_pts  = load_risk_points(RISK_GEOJSON)
+#     risk_field = RiskField(risk_pts)
+
+#     # 2) 랜덤 쓰레기(한 번만 생성 → 두 알고리즘 공통 사용)
+#     print("\n=== GENERATING RANDOM TRASH (shared) ===")
+#     rand_pts = generate_random_trash(rng, hotspots)
+#     print(f"[trash] Generated {len(rand_pts)} random points")
+
+#     # 3) 질량 귀속(공통)
+#     assign_random_mass_to_hotspots(hotspots, rand_pts)
+
+#     # 4) 두 알고리즘 실행 (동일 입력 사본으로)
+#     print("\n=== RUN: Score-based ===")
+#     res_score = run_algorithm(
+#         name="score",
+#         hotspots_in=hotspots,
+#         rand_in=rand_pts,
+#         risk_field=risk_field,
+#         selector_fn=select_next_by_score
+#     )
+
+#     print("\n=== RUN: Nearest Neighbor ===")
+#     res_near = run_algorithm(
+#         name="nearest",
+#         hotspots_in=hotspots,
+#         rand_in=rand_pts,
+#         risk_field=risk_field,
+#         selector_fn=select_next_by_nearest
+#     )
+
+#     # 5) KPI 출력
+#     def print_kpi(k):
+#         print(f"  - algo               : {k['algo']}")
+#         print(f"  - total op time (h)  : {k['total_operation_time_h']:.2f}")
+#         print(f"  - distance (km)      : {k['distance_km']:.2f}")
+#         print(f"  - travel time (min)  : {k['travel_time_min']:.1f}")
+#         print(f"  - collect time (min) : {k['collection_time_min']:.1f}")
+#         print(f"  - point rate         : {k['point_rate']*100:.1f}% ({k['collected_points']}/{k['total_points']})")
+#         print(f"  - mass  rate         : {k['mass_rate']*100:.1f}% ({k['collected_mass']:.0f}/{k['total_mass']:.0f})")
+#         print(f"  - collisions         : {k['collision_count']}")
+#         print(f"  - visited steps      : {k['visited_steps']}")
+
+#     print("\n=== KPI: Score-based ===");   print_kpi(res_score['kpi'])
+#     print("\n=== KPI: Nearest Neighbor ==="); print_kpi(res_near['kpi'])
+
+#     # 6) JSON 저장
+#     out = {
+#         'seed_used': "AUTO" if args.seed is None else args.seed,
+#         'kpi_score': res_score['kpi'],
+#         'kpi_nearest': res_near['kpi'],
+#         'route_score': [{'lon': lon, 'lat': lat} for lon, lat in res_score['route']],
+#         'route_score_smooth': [{'lon': lon, 'lat': lat} for lon, lat in res_score['route_smooth']],
+#         'route_nearest': [{'lon': lon, 'lat': lat} for lon, lat in res_near['route']],
+#         'route_nearest_smooth': [{'lon': lon, 'lat': lat} for lon, lat in res_near['route_smooth']],
+#         'hotspots': [
+#             {'id': h.id, 'lon': h.lon, 'lat': h.lat, 'weight': h.weight, 'mass': h.mass}
+#             for h in hotspots
+#         ]
+#     }
+#     out_path = os.path.join(RESULT_DIR, "route_result_both.json")
+#     with open(out_path, "w", encoding="utf-8") as f:
+#         json.dump(out, f, indent=2, ensure_ascii=False)
+#     print(f"[result] saved: {out_path}")
+
+#     # 7) 지도 저장
+#     if folium:
+#         save_map_compare(res_score, res_near, hotspots, rand_pts, risk_pts)
+
+#     print("\n✅ DUAL ROUTE COMPARISON COMPLETE!")
+
+# # =========================
+# # 엔트리포인트
+# # =========================
+# if __name__ == "__main__":
+#     main()
