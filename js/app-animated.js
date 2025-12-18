@@ -7,6 +7,7 @@ let vessels = []; // 모든 선박 정보
 let trails = {}; // 선박 경로 자취
 let vesselLayer; // AIS 복잡도 레이어
 let hotspotLayer; // 쓰레기 밀집구역 레이어
+let aisRealtimeLayer; // 🆕 실시간 AIS 데이터 레이어
 
 // 내 선박 초기 위치 및 설정 (부산항 정박)
 const myVessel = {
@@ -39,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initAlerts();
     initVesselLayer(); // AIS 복잡도 레이어 초기화
     initHotspotLayer(); // 쓰레기 밀집구역 레이어 초기화
+    initAISRealtimeLayer(); // 🆕 실시간 AIS 데이터 레이어 초기화
     initEventListeners();
     
     // 내 선박 경로 - 제거됨 (고정 위치)
@@ -635,6 +637,34 @@ async function initHotspotLayer() {
         console.log('✅ 쓰레기 밀집구역 레이어 초기화 성공');
     } catch (error) {
         console.error('❌ 쓰레기 밀집구역 레이어 초기화 실패:', error);
+    }
+}
+
+// 🆕 실시간 AIS 데이터 레이어 초기화
+async function initAISRealtimeLayer() {
+    try {
+        console.log('🚀 실시간 AIS 레이어 초기화 시작...');
+        aisRealtimeLayer = new AISRealtimeLayer(map);
+        
+        // 🚢 새로고침 버튼 이벤트 리스너
+        const refreshBtn = document.getElementById('refreshAIS');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                console.log('🔄 수동 새로고침 클릭!');
+                aisRealtimeLayer.refresh();
+            });
+        }
+        
+        console.log('✅ 실시간 AIS 레이어 초기화 성공');
+    } catch (error) {
+        console.error('❌ 실시간 AIS 레이어 초기화 실패:', error);
+        
+        // UI에 오류 표시
+        const countEl = document.getElementById('aisVesselCount');
+        if (countEl) {
+            countEl.textContent = '오류 발생';
+            countEl.style.color = '#f44336';
+        }
     }
 }
 

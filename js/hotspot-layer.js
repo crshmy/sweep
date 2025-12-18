@@ -365,6 +365,18 @@ class HotspotLayer {
         }
     }
 
+    // 📋 모든 핫스팟 데이터 가져오기 (경로 계산용)
+    getAllHotspots() {
+        return this.hotspots.map(h => ({
+            lat: h.lat,
+            lon: h.lon,
+            density: h.value,
+            id: h.id,
+            priority: h.value > 30 ? 'high' : h.value > 15 ? 'medium' : 'low',
+            name: `핫스팟 #${h.id}`
+        }));
+    }
+
     // 🎨 히트맵 스타일 변경 (런타임)
     updateStyle(options = {}) {
         const {

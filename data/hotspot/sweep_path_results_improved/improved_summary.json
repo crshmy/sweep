@@ -1,0 +1,27 @@
+{
+  "algorithm": "Improved Hybrid (Cluster + BFS + Lookahead)",
+  "configuration": {
+    "grid_cell_size_m": 100,
+    "vessel_speed_ms": 2.5,
+    "collection_time_s": 30
+  },
+  "test_scenarios": 50,
+  "statistics": {
+    "collection": {
+      "avg_rate": 0.8314697848727467,
+      "avg_collected": 113.34,
+      "avg_total": 135.98
+    },
+    "distance": {
+      "avg_grid_distance": 330.48,
+      "avg_actual_distance_km": 38.40650632495262
+    },
+    "time": {
+      "avg_total_operation_time_h": 5.211889591661402
+    },
+    "performance": {
+      "avg_collisions": 0.0,
+      "avg_algorithm_time_s": 0.008425359725952148
+    }
+  }
+}

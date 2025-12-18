@@ -4,7 +4,7 @@
 class WeatherAwareRouter {
     constructor(weatherLayer) {
         this.weatherLayer = weatherLayer;
-        this.gridSize = 0.01; // 약 1.1km 간격
+        this.gridSize = 0.005; // 약 550m 간격 (더 정밀하게)
         
         // 가중치 설정
         this.weights = {
@@ -20,22 +20,40 @@ class WeatherAwareRouter {
             maxWaveHeight: 3.0  // m
         };
         
-        console.log('🧭 기상 기반 경로 시스템 초기화');
+        // 해역 범위 (부산 앞바다 - 바다만 허용)
+        this.seaBounds = {
+            minLat: 34.70,  // 남쪽 한계
+            maxLat: 35.08,  // 북쪽 한계 (육지 시작)
+            minLon: 128.80, // 서쪽 한계
+            maxLon: 129.40  // 동쪽 한계
+        };
+        
+        console.log('🧭 기상 기반 경로 시스템 초기화 (해상 전용)');
     }
 
-    // 🎯 최적 경로 계산 (A* + 기상)
-    async calculateOptimalRoute(start, hotspots, currentPosition) {
-        console.log('🔍 최적 경로 계산 시작...');
+    // 🎯 최적 경로 계산 (A* + 기상 + 왕복)
+    async calculateOptimalRoute(start, hotspots, currentPosition, returnToStart = true) {
+        console.log('🔍 최적 경로 계산 시작... (왕복: ' + (returnToStart ? 'YES' : 'NO') + ')');
+        console.log('📍 실제 출발지:', start);
         
         // 1. 핫스팟 우선순위 정렬
         const prioritizedHotspots = this.prioritizeHotspots(hotspots, currentPosition);
         
-        // 2. 각 핫스팟까지의 경로 계산
+        // 2. 각 핫스팟까지의 경로 계산 (가는 길)
         const routes = [];
-        let currentPos = start;
+        let currentPos = start; // ✅ 실제 선박 위치에서 시작
         
-        for (const hotspot of prioritizedHotspots) {
-            const targetPos = [hotspot.lat, hotspot.lon];
+        console.log('🛫 가는 길: 출발지 → 핫스팟 ' + prioritizedHotspots.length + '개');
+        
+        for (let i = 0; i < prioritizedHotspots.length; i++) {
+            const hotspot = prioritizedHotspots[i];
+            let targetPos = [hotspot.lat, hotspot.lon];
+            
+            // 핫스팟이 육지 근처면 바다쪽으로 (핫스팟만)
+            if (targetPos[0] > 35.08) {
+                targetPos = [35.07, targetPos[1]];
+                console.log(`⚠️ 핫스팟 ${i+1}이 육지 근처임, 바다로 이동:`, targetPos);
+            }
             
             // A* 알고리즘으로 경로 찾기
             const path = await this.aStarWithWeather(currentPos, targetPos);
@@ -53,8 +71,29 @@ class WeatherAwareRouter {
             }
         }
         
-        // 3. 전체 경로 병합
+        // 3. 돌아오는 경로 추가
+        if (returnToStart && routes.length > 0) {
+            console.log('🛬 돌아오는 길: 마지막 핫스팟 → 출발지');
+            
+            const lastPos = routes[routes.length - 1].to;
+            const returnPath = await this.aStarWithWeather(lastPos, start); // ✅ 실제 출발지로 귀환
+            
+            if (returnPath) {
+                routes.push({
+                    from: lastPos,
+                    to: start,
+                    path: returnPath,
+                    hotspot: { name: '출발지 귀환', lat: start[0], lon: start[1], density: 0, priority: 'return' },
+                    cost: this.calculatePathCost(returnPath)
+                });
+                
+                console.log('✅ 귀환 경로 추가 완료');
+            }
+        }
+        
+        // 4. 전체 경로 병합
         const fullRoute = this.mergeRoutes(routes);
+        fullRoute.isRoundTrip = returnToStart;
         
         console.log('✅ 경로 계산 완료:', fullRoute);
         return fullRoute;
@@ -148,9 +187,44 @@ class WeatherAwareRouter {
         ];
     }
 
-    // 🌊 기상 비용 계산
+    // 🏝️ 육지 체크 (정밀 버전 - 부산/김해/거제 해역)
+    isLand(lat, lon) {
+        // 포괄적인 육지 체크 - 보수적으로
+        
+        // 부산항 북쪽 육지 (안전 마진을 크게)
+        if (lat > 35.09) {
+            return true; // 북위 35.09도 이상은 모두 육지
+        }
+        
+        // 서쪽 김해/거제 육지
+        if (lon < 128.85) {
+            return true; // 동경 128.85도 서쪽은 육지
+        }
+        
+        // 영도구 방향 (동쪽 해안)
+        if (lat > 35.05 && lon > 129.05 && lon < 129.12) {
+            return true; // 해운대/광안리 해변 그 너머
+        }
+        
+        return false;
+    }
+
+    // 🌊 기상 비용 계산 (육지 회피 포함)
     async getWeatherCost(position) {
-        const weather = await this.weatherLayer.getWeatherAt(position[0], position[1]);
+        const [lat, lon] = position;
+        
+        // 🚨 1순위: 해역 밖으로 나가면 차단
+        if (lat < this.seaBounds.minLat || lat > this.seaBounds.maxLat ||
+            lon < this.seaBounds.minLon || lon > this.seaBounds.maxLon) {
+            return 99999;
+        }
+        
+        // 🚨 2순위: 육지 체크
+        if (this.isLand(lat, lon)) {
+            return 99999; // 절대 통과 불가
+        }
+        
+        const weather = await this.weatherLayer.getWeatherAt(lat, lon);
         
         if (!weather) return 0;
         

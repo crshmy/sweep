@@ -127,6 +127,29 @@
                     </button>
                 </section>
 
+                <!-- 실시간 AIS 정보 (새로 추가!) -->
+                <section class="info-panel ais-realtime-panel">
+                    <h3>🚢 실시간 AIS 선박</h3>
+                    <div class="ais-realtime-info">
+                        <div class="info-row">
+                            <span class="label">부산 해역:</span>
+                            <span class="value" id="aisVesselCount" style="color: #4caf50; font-weight: bold;">로딩중...</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">마지막 업데이트:</span>
+                            <span class="value" id="aisLastUpdate" style="font-size: 12px;">대기중</span>
+                        </div>
+                        <div class="info-row" style="margin-top: 8px;">
+                            <span id="aisLoadingIndicator" style="display: none; color: #ff9800; font-size: 12px;">
+                                🔄 데이터 로딩중...
+                            </span>
+                        </div>
+                    </div>
+                    <button class="optimize-btn" id="refreshAIS" style="margin-top: 10px; font-size: 13px;">
+                        🔄 AIS 데이터 갱신
+                    </button>
+                </section>
+
                 <!-- 쓰레기 밀집 예상구역 -->
                 <section class="info-panel hotspot-panel">
                     <h3>🎯 쓰레기 밀집 예상구역</h3>
@@ -313,11 +336,15 @@
     <script src="js/hotspot-layer.js"></script>
     <script src="js/ais-complexity-layer.js"></script>
     <script src="js/route-optimizer.js"></script>
+    <!-- 🆕 실시간 AIS 데이터 레이어 -->
+    <script src="js/ais-realtime-layer.js"></script>
     <script src="js/app-animated.js"></script>
     <script src="js/fishing-addon.js"></script>
     <!-- 패널 드래그 기능 -->
     <script src="js/draggable-panels.js"></script>
     <!-- 🔥 weather-integration.js는 맨 마지막! (myVessel 필요) -->
     <script src="js/weather-integration.js"></script>
+    <!-- 🧭 경로 계산 통합 (발표용) -->
+    <script src="js/route-integration.js"></script>
 </body>
 </html>

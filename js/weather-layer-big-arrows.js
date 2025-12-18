@@ -1,4 +1,4 @@
-// 🌊 실제 기상청 바람 패턴 기반 레이어
+// 🌊 드라마틱한 바람 레이어 - 큰 화살표 버전
 
 class WeatherLayer {
     constructor(map) {
@@ -6,8 +6,12 @@ class WeatherLayer {
         this.windLayer = null;
         this.waveLayer = null;
         
-        // 격자 설정
-        this.gridSize = 0.08; // 조금 더 넓은 간격
+        // 고정 기상 데이터
+        this.baseWindSpeed = 6.5;
+        this.baseWindDir = 45;
+        
+        // 격자 설정 (더 넓게)
+        this.gridSize = 0.12; // 0.12도 간격으로 넓게
         
         // 고정 범위 (부산 앞바다 전체)
         this.fixedBounds = {
@@ -22,13 +26,13 @@ class WeatherLayer {
         this.waveGridLayer = L.layerGroup();
         this.gridData = new Map();
         
-        console.log('🌊 기상청 바람 패턴 레이어 초기화');
+        console.log('🌊 드라마틱 바람 레이어 초기화 (큰 화살표)');
     }
 
     // 🌊 초기화
     async init() {
         try {
-            this.generateRealisticWindData();
+            this.generateFixedWeatherData();
             this.createWindGridLayer();
             this.createWaveGridLayer();
             
@@ -59,8 +63,8 @@ class WeatherLayer {
         return true;
     }
 
-    // 📊 실제 기상청 패턴 기반 바람 데이터 생성
-    generateRealisticWindData() {
+    // 📊 고정 범위 기상 데이터 생성
+    generateFixedWeatherData() {
         const points = [];
         
         for (let lat = this.fixedBounds.minLat; lat <= this.fixedBounds.maxLat; lat += this.gridSize) {
@@ -76,39 +80,11 @@ class WeatherLayer {
         points.forEach(([lat, lon]) => {
             const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
             
-            // 🎯 실제 기상청 바람 패턴 적용
-            let windDir, windSpeed;
+            const latVar = Math.sin(lat * 40) * 2.0;
+            const lonVar = Math.cos(lon * 40) * 2.0;
             
-            // 남서쪽 (통영/거제 해역) - 북동풍
-            if (lat < 34.8 && lon < 128.8) {
-                windDir = 45 + (Math.random() - 0.5) * 20;
-                windSpeed = 5.5 + Math.random() * 2;
-            }
-            // 남동쪽 (대한해협) - 북풍~북동풍
-            else if (lat < 34.8 && lon >= 128.8) {
-                windDir = 15 + (Math.random() - 0.5) * 30;
-                windSpeed = 6.0 + Math.random() * 2.5;
-            }
-            // 중앙 해역 - 북동풍
-            else if (lat >= 34.8 && lat < 35.0 && lon < 129.1) {
-                windDir = 50 + (Math.random() - 0.5) * 25;
-                windSpeed = 5.0 + Math.random() * 2;
-            }
-            // 부산 앞바다 - 동풍~북동풍
-            else if (lat >= 34.8 && lat < 35.0 && lon >= 129.1) {
-                windDir = 70 + (Math.random() - 0.5) * 30;
-                windSpeed = 6.5 + Math.random() * 2;
-            }
-            // 북쪽 해역 (마산만) - 동풍
-            else if (lat >= 35.0 && lon < 128.8) {
-                windDir = 85 + (Math.random() - 0.5) * 20;
-                windSpeed = 4.5 + Math.random() * 1.5;
-            }
-            // 북동쪽 - 동남동풍
-            else {
-                windDir = 100 + (Math.random() - 0.5) * 25;
-                windSpeed = 5.5 + Math.random() * 2;
-            }
+            const windSpeed = Math.max(3, this.baseWindSpeed + latVar);
+            const windDir = (this.baseWindDir + lonVar * 15 + 360) % 360;
             
             this.gridData.set(key, {
                 wind: {
@@ -120,7 +96,9 @@ class WeatherLayer {
                     height: this.estimateWaveHeight(windSpeed),
                     period: 5 + windSpeed * 0.2,
                     direction: windDir
-                }
+                },
+                temperature: 23 + Math.sin(lat * 50) * 2,
+                visibility: 15 + Math.cos(lon * 30) * 3
             });
         });
         
@@ -161,7 +139,7 @@ class WeatherLayer {
         console.log(`✅ ${this.gridData.size}개 파도 격자 생성`);
     }
 
-    // 📐 바람 격자 타일 생성 (기상청 스타일 검은 화살표)
+    // 📐 바람 격자 타일 생성 (드라마틱 큰 화살표!)
     createWindGridTile(lat, lon, wind) {
         const color = this.getWindSpeedColor(wind.speed);
         const halfGrid = this.gridSize / 2;
@@ -175,38 +153,64 @@ class WeatherLayer {
             color: color,
             fillColor: color,
             fillOpacity: 0.25,
-            weight: 0.3,
+            weight: 0.5,
             opacity: 0.4
         });
         
-        // 기상청 스타일 빵빵한 삼각 화살표 (진한 파랑)
+        // 🎯 매우 큰 바람 화살표!
         const arrowIcon = L.divIcon({
-            className: 'wind-arrow-kma',
+            className: 'wind-arrow-big',
             html: `
                 <div style="
-                    width: 35px;
-                    height: 35px;
+                    width: 50px;
+                    height: 50px;
                     transform: rotate(${wind.direction}deg);
-                    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+                    filter: drop-shadow(0 3px 6px rgba(0,0,0,0.6));
+                    animation: windPulse 2.5s ease-in-out infinite;
                 ">
-                    <svg width="35" height="35" viewBox="0 0 35 35">
-                        <!-- 빵빵한 삼각형 화살표 (하얀색) -->
-                        <path d="M17.5 6 L26 26 L17.5 22 L9 26 Z" 
-                              fill="#FFFFFF" 
-                              opacity="0.55"/>
+                    <svg width="50" height="50" viewBox="0 0 50 50">
+                        <!-- 화살표 몸통 -->
+                        <line x1="25" y1="12" x2="25" y2="42" 
+                              stroke="white" 
+                              stroke-width="5" 
+                              stroke-linecap="round"
+                              opacity="0.95"/>
+                        <!-- 화살표 머리 -->
+                        <path d="M25 4 L35 16 L25 13 L15 16 Z" 
+                              fill="white" 
+                              stroke="${color}" 
+                              stroke-width="2.5"
+                              opacity="0.95"/>
+                        <!-- 바람 강도 표시 (깃털) -->
+                        <line x1="25" y1="22" x2="32" y2="19" 
+                              stroke="white" 
+                              stroke-width="4" 
+                              stroke-linecap="round"
+                              opacity="0.85"/>
+                        <line x1="25" y1="30" x2="32" y2="27" 
+                              stroke="white" 
+                              stroke-width="4" 
+                              stroke-linecap="round"
+                              opacity="0.85"/>
                     </svg>
                 </div>
+                <style>
+                @keyframes windPulse {
+                    0%, 100% { transform: scale(1) rotate(${wind.direction}deg); opacity: 0.9; }
+                    50% { transform: scale(1.15) rotate(${wind.direction}deg); opacity: 1; }
+                }
+                </style>
             `,
-            iconSize: [35, 35],
-            iconAnchor: [17.5, 17.5]
+            iconSize: [50, 50],
+            iconAnchor: [25, 25]
         });
         
         const arrowMarker = L.marker([lat, lon], { icon: arrowIcon });
         
         const popup = `
-            <div style="font-size: 12px;">
-                <b>🌬️ 바람</b><br>
-                풍속: <strong>${wind.speed.toFixed(1)} m/s</strong><br>
+            <div style="font-size: 13px; font-weight: bold;">
+                <b style="color: ${color};">🌬️ 바람</b><br>
+                풍속: <strong style="font-size: 16px;">${wind.speed.toFixed(1)} m/s</strong><br>
                 풍향: ${this.degreesToDirection(wind.direction)} (${Math.round(wind.direction)}°)<br>
                 돌풍: ${wind.gust.toFixed(1)} m/s
             </div>
@@ -231,7 +235,7 @@ class WeatherLayer {
             color: color,
             fillColor: color,
             fillOpacity: 0.25,
-            weight: 0.3,
+            weight: 0.5,
             opacity: 0.3
         });
         
@@ -242,14 +246,14 @@ class WeatherLayer {
                     color: white;
                     font-size: 11px;
                     font-weight: bold;
-                    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+                    text-shadow: 0 2px 4px rgba(0,0,0,0.8);
                     text-align: center;
                 ">
-                    ${waves.height.toFixed(1)}m
+                    🌊 ${waves.height.toFixed(1)}m
                 </div>
             `,
-            iconSize: [45, 20],
-            iconAnchor: [22.5, 10]
+            iconSize: [50, 20],
+            iconAnchor: [25, 10]
         });
         
         const textMarker = L.marker([lat, lon], { icon: textIcon });
@@ -291,7 +295,7 @@ class WeatherLayer {
         return '#f44336';
     }
 
-    // 📍 특정 위치의 기상 데이터
+    // 📍 특정 위치의 기상 데이터 (중요!)
     getWindAtPosition(lat, lon) {
         const gridLat = Math.round(lat / this.gridSize) * this.gridSize;
         const gridLon = Math.round(lon / this.gridSize) * this.gridSize;
@@ -302,13 +306,10 @@ class WeatherLayer {
             return data.wind;
         }
         
-        return { speed: 6.0, direction: 45, gust: 7.8 };
-    }
-
-    async getWeatherAt(lat, lon) {
         return {
-            wind: this.getWindAtPosition(lat, lon),
-            waves: { height: 0.8, period: 6, direction: 45 }
+            speed: this.baseWindSpeed,
+            direction: this.baseWindDir,
+            gust: this.baseWindSpeed * 1.3
         };
     }
 
