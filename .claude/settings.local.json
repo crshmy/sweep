@@ -3,7 +3,10 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(rm:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\n졸업 프로젝트 최종 정리 및 문서화\n\n주요 변경사항:\n- 전문적인 README.md 작성 \\(한글, 목차, 상세 설명\\)\n- PROJECT_INFO.md 추가 \\(프로젝트 개요 및 핵심 정보\\)\n- .gitignore 업데이트 \\(체계적인 파일 제외 규칙\\)\n- 불필요한 테스트 파일 정리\n  * simple.html, simple-v2.html, test.html 삭제\n  * test-api.html, START_HERE.md 삭제\n  * 프로젝트_정리.md 삭제\n\n문서 구조:\n- 프로젝트 개요 및 목표\n- 주요 기능 상세 설명\n- 시스템 아키텍처 다이어그램\n- 설치 및 실행 가이드\n- 알고리즘 상세 \\(A* 경로 탐색, 파고 추정\\)\n- 데이터 구조 및 출처\n- 문제 해결 가이드\n- 향후 개발 계획\n\n기술 스택:\n- Frontend: HTML5, CSS3, JavaScript ES6+\n- 지도: Leaflet.js 1.9.4, Leaflet.heat 0.2.0\n- 알고리즘: A* 경로 탐색 + 기상 비용 함수\n- 데이터: 쓰레기 핫스팟 \\(20개\\), AIS 어선, 기상 정보\n\n🎓 2024년 졸업 프로젝트 완료\n🌊 Made with love for cleaner oceans\n\n🤖 Generated with Claude Code \\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git remote set-url:*)",
+      "Bash(git push:*)"
     ]
   }
 }

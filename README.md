@@ -387,7 +387,7 @@ normalized = Math.log10(value + 1) / Math.log10(maxValue + 1)
 
 MIT License
 
-Copyright (c) 2024 Marine Cleanup Navigation Project
+Copyright (c) 2025 Marine Cleanup Navigation Project
 
 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
 
@@ -414,4 +414,4 @@ Copyright (c) 2024 Marine Cleanup Navigation Project
 
 **Made with 🌊 for cleaner oceans**
 
-*2024년 졸업 프로젝트 - 대한해협 부유쓰레기 수거 최적화 네비게이션*
+*2025년 졸업 프로젝트 - 대한해협 부유쓰레기 수거 최적화 네비게이션*
